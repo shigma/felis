@@ -77,11 +77,12 @@ impl Statement {
 enum Expression {
     Binary(Binary),
     Unary(Unary),
-    // Call(Call),
+    Call(Call),
     Number(String),
     String(String),
     Boolean(bool),
     Identifier(Identifier),
+    Tuple(Vec<Expression>),
 }
 
 impl Expression {
@@ -91,18 +92,35 @@ impl Expression {
             .op(Op::infix(Rule::mul, Assoc::Left) | Op::infix(Rule::div, Assoc::Left))
             .op(Op::infix(Rule::pow, Assoc::Right))
             .op(Op::prefix(Rule::neg))
-            .map_primary(|atom| match atom.as_rule() {
-                Rule::number => Expression::Number(atom.as_str().to_string()),
-                Rule::string => Expression::String(atom.as_str().to_string()),
+            .op(Op::postfix(Rule::call))
+            .map_primary(|primary| match primary.as_rule() {
+                Rule::number => Expression::Number(primary.as_str().to_string()),
+                Rule::string => Expression::String(primary.as_str().to_string()),
                 Rule::tru => Expression::Boolean(true),
                 Rule::fls => Expression::Boolean(false),
-                Rule::ident => Expression::Identifier(Identifier { name: atom.as_str().to_string() }),
-                Rule::unary => Expression::Unary(Unary::parse(atom)),
-                Rule::expr => Expression::parse(atom.into_inner()),
-                _ => panic!("Unexpected rule: {:?}", atom.as_rule()),
+                Rule::ident => Expression::Identifier(Identifier { name: primary.as_str().to_string() }),
+                Rule::tuple => {
+                    let vec: Vec<Expression> = primary.into_inner().map(|pair| Expression::parse(pair.into_inner())).collect();
+                    if vec.len() == 1 {
+                        // vec[0]
+                        Expression::Tuple(vec)
+                    } else {
+                        Expression::Tuple(vec)
+                    }
+                },
+                _ => panic!("Unexpected rule: {:?}", primary.as_rule()),
             })
-            .map_infix(|left, infix, right| {
-                Expression::Binary(Binary::parse(left, infix, right))
+            .map_infix(|lhs, op, rhs| {
+                Expression::Binary(Binary::parse(lhs, op, rhs))
+            })
+            .map_prefix(|op, rhs| {
+                Expression::Unary(Unary::parse(op, rhs))
+            })
+            .map_postfix(|lhs, op| {
+                Expression::Call(Call {
+                    callee: Rc::new(RefCell::new(lhs)),
+                    argument: Rc::new(RefCell::new(Expression::parse(op.into_inner()))),
+                })
             })
             .parse(pairs)
     }
@@ -134,6 +152,17 @@ impl Expression {
             Expression::Identifier(identifier) => {
                 println!("{:indent$}{}Identifier ({})", "", prefix, identifier.name, indent = f.indent);
             },
+            Expression::Call(call) => {
+                println!("{:indent$}{}FunctionCall", "", prefix, indent = f.indent);
+                call.callee.borrow().print(Formatter { indent: f.indent + 2, label: Some("callee".to_string()) });
+                call.argument.borrow().print(Formatter { indent: f.indent + 2, label: Some("argument".to_string()) });
+            },
+            Expression::Tuple(exprs) => {
+                println!("{:indent$}{}Tuple", "", prefix, indent = f.indent);
+                for (i, expr) in exprs.iter().enumerate() {
+                    expr.print(Formatter { indent: f.indent + 2, label: Some(format!("{}", i)) });
+                }
+            }
         }
     }
 }
@@ -145,12 +174,9 @@ struct Unary {
 }
 
 impl Unary {
-    fn parse(atom: Pair<'_, Rule>) -> Unary {
-        let mut pairs = atom.into_inner();
-        let operator = pairs.next().unwrap().as_str().to_string();
-        let operand = Expression::parse(pairs.next().unwrap().into_inner());
+    fn parse(prefix: Pair<'_, Rule>, operand: Expression) -> Unary {
         Unary {
-            operator,
+            operator: prefix.as_str().to_string(),
             operand: Rc::new(RefCell::new(operand)),
         }
     }
@@ -174,11 +200,17 @@ impl Binary {
 }
 
 #[derive(Debug)]
+struct Call {
+    callee: Rc<RefCell<Expression>>,
+    argument: Rc<RefCell<Expression>>,
+}
+
+#[derive(Debug)]
 struct Identifier {
     name: String,
 }
 
 fn main() {
-    let program = Program::parse("(a - b ** 2) / 3;");
+    let program = Program::parse("(a - b (1, -2) (3) ** 2) / 3;");
     program.print();
 }

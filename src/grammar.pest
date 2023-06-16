@@ -18,14 +18,17 @@ stmt = _{ stmt_expr /* | typebind | varbind */ }
 
 stmt_expr = { expr ~ ";" }
 
-atom = _{ number | string | boolean | ident | unary | "(" ~ expr ~ ")" }
+primary = _{ prefix* ~ (number | string | boolean | ident | tuple) ~ suffix* }
 
-unary = { prefix ~ atom }
+expr = { primary ~ (infix ~ primary)* }
+
+tuple = { "(" ~ expr ~ ("," ~ expr)* ~ ")" }
 
 prefix = _{ neg }
   neg = { "-" }
 
-expr = { atom ~ (infix ~ atom)* }
+suffix = _{ call }
+  call = { tuple }
 
 infix = _{ add | sub | pow | mul | div }
   add = { "+" }
@@ -33,7 +36,3 @@ infix = _{ add | sub | pow | mul | div }
   pow = { "**" }
   mul = { "*" }
   div = { "/" }
-
-appterm = { expr ~ tupleterm }
-
-tupleterm = { "(" ~ expr ~ ("," ~ expr)* ~ ")" }
