@@ -10,7 +10,7 @@ boolean = _{ tru | fls }
   tru = _{ "true" }
   fls = _{ "false" }
 
-ident = @{ (alpha | "_") ~ (alpha | digit | "_")+ }
+ident = @{ (alpha | "_") ~ (alpha | digit | "_")* }
 
 main = _{ SOI ~ stmt* ~ EOI }
 

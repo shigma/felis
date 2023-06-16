@@ -3,6 +3,7 @@ extern crate pest;
 extern crate pest_derive;
 
 use std::cell::RefCell;
+use std::fmt::Debug;
 use std::rc::Rc;
 
 use pest::{Parser, iterators::Pairs, iterators::Pair};
@@ -11,6 +12,11 @@ use pest::pratt_parser::*;
 #[derive(Parser)]
 #[grammar = "grammar.pest"]
 struct Grammar;
+
+struct Formatter {
+    indent: usize,
+    label: Option<String>,
+}
 
 #[derive(Debug)]
 struct Program {
@@ -33,6 +39,13 @@ impl Program {
         }
         Program { statements }
     }
+
+    fn print(&self) {
+        for statement in &self.statements {
+            println!("Program");
+            statement.print(2);
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -47,6 +60,17 @@ enum Statement {
     // Break(Break),
     // Continue(Continue),
     // Block(Block)
+}
+
+impl Statement {
+    fn print(&self, indent: usize) {
+        match self {
+            Statement::Expression(expression) => {
+                println!("{:indent$}ExpressionStatement", "", indent = indent);
+                expression.print(Formatter { indent: indent + 2, label: None });
+            },
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -81,6 +105,36 @@ impl Expression {
                 Expression::Binary(Binary::parse(left, infix, right))
             })
             .parse(pairs)
+    }
+
+    fn print(&self, f: Formatter) {
+        let prefix = match f.label {
+            Some(label) => format!("{}: ", label),
+            None => "".to_string(),
+        };
+        match self {
+            Expression::Binary(binary) => {
+                println!("{:indent$}{}BinaryExpression ({})", "", prefix, binary.operator, indent = f.indent);
+                binary.left.borrow().print(Formatter { indent: f.indent + 2, label: Some("left".to_string()) });
+                binary.right.borrow().print(Formatter { indent: f.indent + 2, label: Some("right".to_string()) });
+            },
+            Expression::Unary(unary) => {
+                println!("{:indent$}{}UnaryExpression ({})", "", prefix, unary.operator, indent = f.indent);
+                unary.operand.borrow().print(Formatter { indent: f.indent + 2, label: None });
+            },
+            Expression::Number(number) => {
+                println!("{:indent$}{}NumberLiteral ({})", "", prefix, number, indent = f.indent);
+            },
+            Expression::String(string) => {
+                println!("{:indent$}{}StringLiteral ({})", "", prefix, string, indent = f.indent);
+            },
+            Expression::Boolean(boolean) => {
+                println!("{:indent$}{}BooleanLiteral ({})", "", prefix, boolean, indent = f.indent);
+            },
+            Expression::Identifier(identifier) => {
+                println!("{:indent$}{}Identifier ({})", "", prefix, identifier.name, indent = f.indent);
+            },
+        }
     }
 }
 
@@ -125,6 +179,6 @@ struct Identifier {
 }
 
 fn main() {
-    let program = Program::parse("a1 +(b2**3-4);");
-    println!("{:?}", program);
+    let program = Program::parse("(a - b ** 2) / 3;");
+    program.print();
 }
