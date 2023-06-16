@@ -2,25 +2,129 @@ extern crate pest;
 #[macro_use]
 extern crate pest_derive;
 
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use pest::{Parser, iterators::Pairs, iterators::Pair};
+use pest::pratt_parser::*;
 
 #[derive(Parser)]
 #[grammar = "grammar.pest"]
-struct IdentParser;
+struct Grammar;
 
-fn main() {
-    let pairs = IdentParser::parse(Rule::main, "a1 +(b2**3-4);").unwrap_or_else(|e| panic!("{}", e));
-    print_pairs(pairs, 0);
+#[derive(Debug)]
+struct Program {
+    statements: Vec<Statement>
 }
 
-fn print_pairs(pairs: Pairs<'_, Rule>, indent: usize) {
-    for pair in pairs {
-        print_pair(&pair, indent);
-        print_pairs(pair.into_inner(), indent + 2);
+impl Program {
+    fn parse(input: &str) -> Program {
+        let pairs = Grammar::parse(Rule::main, input)
+            .unwrap_or_else(|e| panic!("{}", e));
+        let mut statements = Vec::new();
+        for pair in pairs {
+            match pair.as_rule() {
+                Rule::stmt_expr => {
+                    let inner = pair.into_inner().next().unwrap();
+                    statements.push(Statement::Expression(Expression::parse(inner.into_inner())));
+                },
+                _ => {},
+            }
+        }
+        Program { statements }
     }
 }
 
-fn print_pair(pair: &Pair<'_, Rule>, indent: usize) {
-    let span = pair.as_span();
-    println!("{:indent$}{:?} {:?} ({:?}-{:?})", "", pair.as_rule(), span.as_str(), span.start(), span.end(), indent = indent);
+#[derive(Debug)]
+enum Statement {
+    Expression(Expression),
+    // Declaration(Declaration),
+    // Assignment(Assignment),
+    // If(If),
+    // While(While),
+    // For(For),
+    // Return(Return),
+    // Break(Break),
+    // Continue(Continue),
+    // Block(Block)
+}
+
+#[derive(Debug)]
+enum Expression {
+    Binary(Binary),
+    Unary(Unary),
+    // Call(Call),
+    Number(String),
+    String(String),
+    Boolean(bool),
+    Identifier(Identifier),
+}
+
+impl Expression {
+    fn parse(pairs: Pairs<'_, Rule>) -> Expression {
+        PrattParser::new()
+            .op(Op::infix(Rule::add, Assoc::Left) | Op::infix(Rule::sub, Assoc::Left))
+            .op(Op::infix(Rule::mul, Assoc::Left) | Op::infix(Rule::div, Assoc::Left))
+            .op(Op::infix(Rule::pow, Assoc::Right))
+            .op(Op::prefix(Rule::neg))
+            .map_primary(|atom| match atom.as_rule() {
+                Rule::number => Expression::Number(atom.as_str().to_string()),
+                Rule::string => Expression::String(atom.as_str().to_string()),
+                Rule::tru => Expression::Boolean(true),
+                Rule::fls => Expression::Boolean(false),
+                Rule::ident => Expression::Identifier(Identifier { name: atom.as_str().to_string() }),
+                Rule::unary => Expression::Unary(Unary::parse(atom)),
+                Rule::expr => Expression::parse(atom.into_inner()),
+                _ => panic!("Unexpected rule: {:?}", atom.as_rule()),
+            })
+            .map_infix(|left, infix, right| {
+                Expression::Binary(Binary::parse(left, infix, right))
+            })
+            .parse(pairs)
+    }
+}
+
+#[derive(Debug)]
+struct Unary {
+    operator: String,
+    operand: Rc<RefCell<Expression>>,
+}
+
+impl Unary {
+    fn parse(atom: Pair<'_, Rule>) -> Unary {
+        let mut pairs = atom.into_inner();
+        let operator = pairs.next().unwrap().as_str().to_string();
+        let operand = Expression::parse(pairs.next().unwrap().into_inner());
+        Unary {
+            operator,
+            operand: Rc::new(RefCell::new(operand)),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct Binary {
+    operator: String,
+    left: Rc<RefCell<Expression>>,
+    right: Rc<RefCell<Expression>>,
+}
+
+impl Binary {
+    fn parse(left: Expression, infix: Pair<'_, Rule>, right: Expression) -> Binary {
+        Binary {
+            operator: infix.as_str().to_string(),
+            left: Rc::new(RefCell::new(left)),
+            right: Rc::new(RefCell::new(right)),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct Identifier {
+    name: String,
+}
+
+fn main() {
+    let program = Program::parse("a1 +(b2**3-4);");
+    println!("{:?}", program);
 }

@@ -6,18 +6,24 @@ digit = _{ '0'..'9' }
 
 number = @{ digit+ }
 string = @{ "\"" ~ (!("\"") ~ ANY)* ~ "\"" }
+boolean = _{ tru | fls }
+  tru = _{ "true" }
+  fls = _{ "false" }
 
 ident = @{ (alpha | "_") ~ (alpha | digit | "_")+ }
 
 main = _{ SOI ~ stmt* ~ EOI }
 
-stmt = { expr ~ ";" /* | typebind | varbind */ }
+stmt = _{ stmt_expr /* | typebind | varbind */ }
 
-atom = _{ number | string | ident | "(" ~ expr ~ ")" | unary }
+stmt_expr = { expr ~ ";" }
+
+atom = _{ number | string | boolean | ident | unary | "(" ~ expr ~ ")" }
 
 unary = { prefix ~ atom }
 
-prefix = _{ "-" }
+prefix = _{ neg }
+  neg = { "-" }
 
 expr = { atom ~ (infix ~ atom)* }
 
