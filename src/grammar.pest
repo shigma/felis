@@ -1,0 +1,33 @@
+WHITESPACE = _{ " " | "\n" | "\t" }
+COMMENT = _{ "//" ~ (!("\n") ~ ANY)* }
+
+alpha = _{ 'a'..'z' | 'A'..'Z' }
+digit = _{ '0'..'9' }
+
+number = @{ digit+ }
+string = @{ "\"" ~ (!("\"") ~ ANY)* ~ "\"" }
+
+ident = @{ (alpha | "_") ~ (alpha | digit | "_")+ }
+
+main = _{ SOI ~ stmt* ~ EOI }
+
+stmt = { expr ~ ";" /* | typebind | varbind */ }
+
+atom = _{ number | string | ident | "(" ~ expr ~ ")" | unary }
+
+unary = { prefix ~ atom }
+
+prefix = _{ "-" }
+
+expr = { atom ~ (infix ~ atom)* }
+
+infix = _{ add | sub | pow | mul | div }
+  add = { "+" }
+  sub = { "-" }
+  pow = { "**" }
+  mul = { "*" }
+  div = { "/" }
+
+appterm = { expr ~ tupleterm }
+
+tupleterm = { "(" ~ expr ~ ("," ~ expr)* ~ ")" }
