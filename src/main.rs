@@ -2,7 +2,6 @@ extern crate pest;
 #[macro_use]
 extern crate pest_derive;
 
-use std::borrow::Borrow;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -110,7 +109,7 @@ impl Program {
     fn eval(&self) {
         let ctx = Rc::from(RefCell::from(Context::new()));
         for statement in &self.statements {
-            statement.eval(ctx);
+            statement.eval(&ctx);
         }
     }
 }
@@ -130,10 +129,10 @@ enum Statement {
 }
 
 impl Statement {
-    fn eval(&self, ctx: Rc<RefCell<Context>>) {
+    fn eval(&self, ctx: &Rc<RefCell<Context>>) {
         match self {
             Statement::Expression(expr) => {
-                expr.eval(ctx);
+                println!("{:?}", expr.eval(ctx));
             },
             Statement::ValueBind(bind) => {
                 ctx.borrow_mut().bind(&bind.pattern, bind.expression.eval(ctx));
@@ -288,32 +287,32 @@ impl Expression {
             .parse(pairs)
     }
 
-    fn eval(&self, ctx: Rc<RefCell<Context>>) -> Value {
+    fn eval(&self, ctx: &Rc<RefCell<Context>>) -> Value {
         match self {
             Expression::Binary(binary) => {
-                let left = binary.left.eval(ctx).as_number();
-                let right = binary.right.eval(ctx).as_number();
-                match binary.operator.as_str() {
-                    "+" => Value::Number(left + right),
-                    "-" => Value::Number(left - right),
-                    "*" => Value::Number(left * right),
-                    "/" => Value::Number(left / right),
-                    "**" => Value::Number(left.powf(right)),
-                    _ => panic!("Unexpected operator: {}", binary.operator),
+                let left = binary.left.eval(ctx);
+                let right = binary.right.eval(ctx);
+                match binary.operator {
+                    BinaryOperator::Add => Value::Number(left.as_number() + right.as_number()),
+                    BinaryOperator::Sub => Value::Number(left.as_number() - right.as_number()),
+                    BinaryOperator::Mul => Value::Number(left.as_number() * right.as_number()),
+                    BinaryOperator::Div => Value::Number(left.as_number() / right.as_number()),
+                    BinaryOperator::Pow => Value::Number(left.as_number().powf(right.as_number())),
+                    _ => panic!("Unexpected operator: {:?}", binary.operator),
                 }
             },
             Expression::Unary(unary) => {
                 let operand = unary.operand.eval(ctx).as_number();
-                match unary.operator.as_str() {
-                    "-" => Value::Number(-operand),
-                    _ => panic!("Unexpected operator: {}", unary.operator),
+                match unary.operator {
+                    UnaryOperator::Neg => Value::Number(-operand),
+                    _ => panic!("Unexpected operator: {:?}", unary.operator),
                 }
             },
             Expression::Number(number) => Value::Number(number.parse().unwrap()),
             Expression::String(string) => Value::String(string.clone()),
             Expression::Boolean(boolean) => Value::Boolean(*boolean),
             Expression::Identifier(identifier) => {
-                match ctx.borrow().deref().values.get(&identifier.name) {
+                match ctx.as_ref().borrow().values.get(&identifier.name) {
                     Some(value) => value.as_ref().clone(),
                     None => panic!("Undefined variable: {}", identifier.name),
                 }
@@ -322,7 +321,7 @@ impl Expression {
                 Value::Tuple(exprs.iter().map(|expr| expr.eval(ctx)).collect())
             },
             Expression::Function(function) => {
-                Value::Function(function.clone(), ctx)
+                Value::Function(function.clone(), ctx.clone())
             },
             Expression::Call(call) => {
                 let callee = call.callee.eval(ctx);
@@ -330,7 +329,7 @@ impl Expression {
                 let (func, ctx) = callee.as_function();
                 let ctx = ctx.clone();
                 ctx.borrow_mut().bind(&func.pattern, argument);
-                func.expression.eval(ctx)
+                func.expression.eval(&ctx)
             },
             _ => panic!("Unsuppored evaluation: {:?}", self)
         }
@@ -342,12 +341,12 @@ impl Node for Expression {
         f.header();
         match self {
             Expression::Binary(binary) => {
-                println!("BinaryExpression ({})", binary.operator);
+                println!("BinaryExpression ({:?})", binary.operator);
                 binary.left.print(f.indent(Some("left".to_string())));
                 binary.right.print(f.indent(Some("right".to_string())));
             },
             Expression::Unary(unary) => {
-                println!("UnaryExpression ({})", unary.operator);
+                println!("UnaryExpression ({:?})", unary.operator);
                 unary.operand.print(f.indent(None));
             },
             Expression::Number(number) => {
@@ -383,23 +382,40 @@ impl Node for Expression {
 }
 
 #[derive(Debug, Clone)]
+enum UnaryOperator {
+    Neg,
+}
+
+#[derive(Debug, Clone)]
 struct Unary {
-    operator: String,
+    operator: UnaryOperator,
     operand: Box<Expression>,
 }
 
 impl Unary {
     fn parse(prefix: Pair<'_, Rule>, operand: Expression) -> Unary {
         Unary {
-            operator: prefix.as_str().to_string(),
+            operator: match prefix.as_rule() {
+                Rule::neg => UnaryOperator::Neg,
+                _ => panic!("Unexpected rule: {:?}", prefix.as_rule()),
+            },
             operand: Box::new(operand),
         }
     }
 }
 
 #[derive(Debug, Clone)]
+enum BinaryOperator {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Pow,
+}
+
+#[derive(Debug, Clone)]
 struct Binary {
-    operator: String,
+    operator: BinaryOperator,
     left: Box<Expression>,
     right: Box<Expression>,
 }
@@ -407,7 +423,14 @@ struct Binary {
 impl Binary {
     fn parse(left: Expression, infix: Pair<'_, Rule>, right: Expression) -> Binary {
         Binary {
-            operator: infix.as_str().to_string(),
+            operator: match infix.as_rule() {
+                Rule::add => BinaryOperator::Add,
+                Rule::sub => BinaryOperator::Sub,
+                Rule::mul => BinaryOperator::Mul,
+                Rule::div => BinaryOperator::Div,
+                Rule::pow => BinaryOperator::Pow,
+                _ => panic!("Unexpected rule: {:?}", infix.as_rule()),
+            },
             left: Box::new(left),
             right: Box::new(right),
         }
