@@ -142,10 +142,12 @@ impl Statement {
     fn eval(&self, ctx: &Rc<RefCell<Context>>) {
         match self {
             Statement::Expression(_, expr) => {
-                println!("{:?}", expr.eval(ctx));
+                let ty = expr.to_type(ctx);
+                let val = expr.to_value(ctx);
+                println!("{}: {}", val, ty);
             },
             Statement::ValueBind(_, bind) => {
-                ctx.borrow_mut().bind(&bind.pattern, bind.expression.eval(ctx));
+                ctx.borrow_mut().bind(&bind.pattern, bind.expression.to_value(ctx));
             },
         }
     }
@@ -240,6 +242,27 @@ impl Value {
     }
 }
 
+impl Display for Value {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Value::Number(number) => write!(f, "{}", number),
+            Value::String(string) => write!(f, "{}", string),
+            Value::Boolean(bool) => write!(f, "{}", bool),
+            Value::Tuple(values) => {
+                write!(f, "(")?;
+                for (i, value) in values.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", value)?;
+                }
+                write!(f, ")")
+            },
+            Value::Function(_, _) => write!(f, "<function>"),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 enum Expression {
     Binary(Range, Binary),
@@ -269,7 +292,7 @@ impl Expression {
                     Rule::tru => Expression::Boolean(range, true),
                     Rule::fls => Expression::Boolean(range, false),
                     Rule::ident => Expression::Identifier(range, Identifier { name: primary.as_str().to_string() }),
-                    Rule::tuple => {
+                    Rule::val_tuple => {
                         let mut vec: Vec<Expression> = primary.into_inner().map(|pair| Expression::parse(pair.into_inner())).collect();
                         if vec.len() == 1 {
                             vec.swap_remove(0)
@@ -301,11 +324,11 @@ impl Expression {
             .parse(pairs)
     }
 
-    fn eval(&self, ctx: &Rc<RefCell<Context>>) -> Value {
+    fn to_value(&self, ctx: &Rc<RefCell<Context>>) -> Value {
         match self {
             Expression::Binary(_, binary) => {
-                let left = binary.left.eval(ctx);
-                let right = binary.right.eval(ctx);
+                let left = binary.left.to_value(ctx);
+                let right = binary.right.to_value(ctx);
                 match binary.operator {
                     BinaryOperator::Add => Value::Number(left.as_number() + right.as_number()),
                     BinaryOperator::Sub => Value::Number(left.as_number() - right.as_number()),
@@ -315,7 +338,7 @@ impl Expression {
                 }
             },
             Expression::Unary(_, unary) => {
-                let operand = unary.operand.eval(ctx).as_number();
+                let operand = unary.operand.to_value(ctx).as_number();
                 match unary.operator {
                     UnaryOperator::Neg => Value::Number(-operand),
                 }
@@ -330,18 +353,50 @@ impl Expression {
                 }
             },
             Expression::Tuple(_, exprs) => {
-                Value::Tuple(exprs.iter().map(|expr| expr.eval(ctx)).collect())
+                Value::Tuple(exprs.iter().map(|expr| expr.to_value(ctx)).collect())
             },
             Expression::Function(_, function) => {
                 Value::Function(function.clone(), ctx.clone())
             },
             Expression::Call(_, call) => {
-                let callee = call.callee.eval(ctx);
-                let argument = call.argument.eval(ctx);
+                let callee = call.callee.to_value(ctx);
+                let argument = call.argument.to_value(ctx);
                 let (func, ctx) = callee.as_function();
                 let ctx = ctx.clone();
                 ctx.borrow_mut().bind(&func.pattern, argument);
-                func.expression.eval(&ctx)
+                func.expression.to_value(&ctx)
+            },
+            _ => panic!("Unsuppored evaluation: {:?}", self)
+        }
+    }
+
+    fn to_type(&self, ctx: &Rc<RefCell<Context>>) -> Type {
+        match self {
+            Expression::Binary(_, binary) => {
+                // let left = binary.left.eval(ctx);
+                // let right = binary.right.eval(ctx);
+                // match binary.operator {
+                //     BinaryOperator::Add => Value::Number(left.as_number() + right.as_number()),
+                //     BinaryOperator::Sub => Value::Number(left.as_number() - right.as_number()),
+                //     BinaryOperator::Mul => Value::Number(left.as_number() * right.as_number()),
+                //     BinaryOperator::Div => Value::Number(left.as_number() / right.as_number()),
+                //     BinaryOperator::Pow => Value::Number(left.as_number().powf(right.as_number())),
+                // }
+                Type::Number()
+            },
+            Expression::Number(_, number) => Type::Number(),
+            Expression::String(_, string) => Type::String(),
+            Expression::Boolean(_, boolean) => Type::Boolean(),
+            Expression::Identifier(_, identifier) => {
+                // match ctx.as_ref().borrow().values.get(&identifier.name) {
+                //     Some(value) => value.as_ref().clone(),
+                //     None => panic!("Undefined variable: {}", identifier.name),
+                // }
+                panic!("Unimplemented")
+            },
+            Expression::Tuple(_, exprs) => {
+                // Value::Tuple(exprs.iter().map(|expr| expr.typing(ctx)).collect())
+                panic!("Unimplemented")
             },
             _ => panic!("Unsuppored evaluation: {:?}", self)
         }
@@ -484,6 +539,156 @@ struct Identifier {
 struct Function {
     pattern: Box<Pattern>,
     expression: Box<Expression>,
+}
+
+#[derive(Debug, Clone)]
+enum Type {
+    Number(),
+    String(),
+    Boolean(),
+    Tuple(Vec<Value>),
+    Arrow(Box<Type>, Box<Type>),
+}
+
+impl Display for Type {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Type::Number() => write!(f, "number"),
+            Type::String() => write!(f, "string"),
+            Type::Boolean() => write!(f, "boolean"),
+            Type::Tuple(children) => {
+                write!(f, "(")?;
+                for (i, child) in children.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", child)?;
+                }
+                write!(f, ")")
+            },
+            Type::Arrow(left, right) => write!(f, "{} -> {}", left, right),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+enum TypeExpr {
+    Binary(Range, TypeBinary),
+    Number(Range),
+    String(Range),
+    Boolean(Range),
+    Identifier(Range, Identifier),
+    Tuple(Range, Vec<TypeExpr>),
+}
+
+impl TypeExpr {
+    fn parse(pairs: Pairs<'_, Rule>) -> TypeExpr {
+        PrattParser::new()
+            .op(Op::infix(Rule::arrow, Assoc::Right))
+            // .op(Op::prefix(Rule::neg))
+            // .op(Op::postfix(Rule::call))
+            .map_primary(|primary| {
+                let range = Range::from(&primary.as_span());
+                match primary.as_rule() {
+                    Rule::ident => TypeExpr::Identifier(range, Identifier { name: primary.as_str().to_string() }),
+                    Rule::type_tuple => {
+                        let mut vec: Vec<TypeExpr> = primary.into_inner().map(|pair| TypeExpr::parse(pair.into_inner())).collect();
+                        if vec.len() == 1 {
+                            vec.swap_remove(0)
+                        } else {
+                            TypeExpr::Tuple(range, vec)
+                        }
+                    },
+                    _ => panic!("Unexpected rule: {:?}", primary.as_rule()),
+                }
+            })
+            .map_infix(|lhs, op, rhs| {
+                TypeExpr::Binary(Range::from(&op.as_span()), TypeBinary::parse(lhs, op, rhs))
+            })
+            .parse(pairs)
+    }
+
+    fn eval(&self, ctx: &Rc<RefCell<Context>>) -> Type {
+        match self {
+            TypeExpr::Binary(_, binary) => {
+                let left = binary.left.eval(ctx);
+                let right = binary.right.eval(ctx);
+                match binary.operator {
+                    TypeBinaryOperator::Arrow => Type::Arrow(Box::from(left), Box::from(right)),
+                }
+            },
+            TypeExpr::Identifier(_, identifier) => {
+                panic!("Unimplemented")
+                // match ctx.as_ref().borrow().values.get(&identifier.name) {
+                //     Some(value) => value.as_ref().clone(),
+                //     None => panic!("Undefined variable: {}", identifier.name),
+                // }
+            },
+            TypeExpr::Tuple(_, exprs) => {
+                panic!("Unimplemented")
+                // Type::Tuple(exprs.iter().map(|expr| expr.eval(ctx)).collect())
+            },
+            _ => panic!("Unsuppored evaluation: {:?}", self)
+        }
+    }
+}
+
+impl Node for TypeExpr {
+    fn print(&self, f: Formatter) {
+        f.header();
+        match self {
+            TypeExpr::Binary(_, binary) => {
+                println!("BinaryExpression ({})", binary.operator);
+                binary.left.print(f.indent(Some("left".to_string())));
+                binary.right.print(f.indent(Some("right".to_string())));
+            },
+            TypeExpr::Number(_) => println!("Number"),
+            TypeExpr::String(_) => println!("String"),
+            TypeExpr::Boolean(_) => println!("Boolean"),
+            TypeExpr::Identifier(_, identifier) => {
+                println!("Identifier ({})", identifier.name);
+            },
+            TypeExpr::Tuple(_, exprs) => {
+                println!("Tuple");
+                for (i, expr) in exprs.iter().enumerate() {
+                    expr.print(f.indent(Some(format!("{}", i))));
+                }
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+enum TypeBinaryOperator {
+    Arrow,
+}
+
+impl Display for TypeBinaryOperator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TypeBinaryOperator::Arrow => write!(f, "->"),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct TypeBinary {
+    operator: TypeBinaryOperator,
+    left: Box<TypeExpr>,
+    right: Box<TypeExpr>,
+}
+
+impl TypeBinary {
+    fn parse(left: TypeExpr, infix: Pair<'_, Rule>, right: TypeExpr) -> TypeBinary {
+        TypeBinary {
+            operator: match infix.as_rule() {
+                Rule::arrow => TypeBinaryOperator::Arrow,
+                _ => panic!("Unexpected rule: {:?}", infix.as_rule()),
+            },
+            left: Box::new(left),
+            right: Box::new(right),
+        }
+    }
 }
 
 fn main() {
