@@ -34,6 +34,13 @@ impl Program {
                     let inner = pair.into_inner().next().unwrap();
                     statements.push(Statement::Expression(Expression::parse(inner.into_inner())));
                 },
+                Rule::stmt_valbind => {
+                    let mut inner = pair.into_inner();
+                    let pattern = Pattern::parse(inner.next().unwrap());
+                    let _ = inner.next().unwrap();
+                    let expression = Expression::parse(inner.next().unwrap().into_inner());
+                    statements.push(Statement::ValueBind(ValueBind { pattern, expression }));
+                },
                 _ => {},
             }
         }
@@ -41,9 +48,9 @@ impl Program {
     }
 
     fn print(&self) {
+        println!("Program");
         for statement in &self.statements {
-            println!("Program");
-            statement.print(2);
+            statement.print(Formatter { indent: 2, label: None });
         }
     }
 }
@@ -51,7 +58,7 @@ impl Program {
 #[derive(Debug)]
 enum Statement {
     Expression(Expression),
-    // Declaration(Declaration),
+    ValueBind(ValueBind),
     // Assignment(Assignment),
     // If(If),
     // While(While),
@@ -63,12 +70,64 @@ enum Statement {
 }
 
 impl Statement {
-    fn print(&self, indent: usize) {
+    fn print(&self, f: Formatter) {
         match self {
             Statement::Expression(expression) => {
-                println!("{:indent$}ExpressionStatement", "", indent = indent);
-                expression.print(Formatter { indent: indent + 2, label: None });
+                println!("{:indent$}ExpressionStatement", "", indent = f.indent);
+                expression.print(Formatter { indent: f.indent + 2, label: None });
             },
+            Statement::ValueBind(bind) => {
+                println!("{:indent$}ValueBind", "", indent = f.indent);
+                bind.pattern.print(Formatter { indent: f.indent + 2, label: Some("pattern".to_string()) });
+                bind.expression.print(Formatter { indent: f.indent + 2, label: Some("expression".to_string()) });
+            },
+        }
+    }
+}
+
+#[derive(Debug)]
+struct ValueBind {
+    pattern: Pattern,
+    expression: Expression,
+}
+
+#[derive(Debug)]
+enum Pattern {
+    Identifier(Identifier),
+    Tuple(Vec<Pattern>),
+}
+
+impl Pattern {
+    fn parse(pair: Pair<'_, Rule>) -> Pattern {
+        match pair.as_rule() {
+            Rule::ident => Pattern::Identifier(Identifier { name: pair.as_str().to_string() }),
+            Rule::patt_tuple => {
+                let mut vec: Vec<Pattern> = pair.into_inner().map(|pair| Pattern::parse(pair)).collect();
+                if vec.len() == 1 {
+                    vec.swap_remove(0)
+                } else {
+                    Pattern::Tuple(vec)
+                }
+            },
+            _ => panic!("Unexpected rule: {:?}", pair.as_rule()),
+        }
+    }
+
+    fn print(&self, f: Formatter) {
+        let prefix = match f.label {
+            Some(label) => format!("{}: ", label),
+            None => "".to_string(),
+        };
+        match self {
+            Pattern::Identifier(identifier) => {
+                println!("{:indent$}{}Identifier ({})", "", prefix, identifier.name, indent = f.indent);
+            },
+            Pattern::Tuple(exprs) => {
+                println!("{:indent$}{}Tuple", "", prefix, indent = f.indent);
+                for (i, expr) in exprs.iter().enumerate() {
+                    expr.print(Formatter { indent: f.indent + 2, label: Some(format!("{}", i)) });
+                }
+            }
         }
     }
 }
@@ -100,10 +159,9 @@ impl Expression {
                 Rule::fls => Expression::Boolean(false),
                 Rule::ident => Expression::Identifier(Identifier { name: primary.as_str().to_string() }),
                 Rule::tuple => {
-                    let vec: Vec<Expression> = primary.into_inner().map(|pair| Expression::parse(pair.into_inner())).collect();
+                    let mut vec: Vec<Expression> = primary.into_inner().map(|pair| Expression::parse(pair.into_inner())).collect();
                     if vec.len() == 1 {
-                        // vec[0]
-                        Expression::Tuple(vec)
+                        vec.swap_remove(0)
                     } else {
                         Expression::Tuple(vec)
                     }
@@ -162,7 +220,7 @@ impl Expression {
                 for (i, expr) in exprs.iter().enumerate() {
                     expr.print(Formatter { indent: f.indent + 2, label: Some(format!("{}", i)) });
                 }
-            }
+            },
         }
     }
 }
@@ -211,6 +269,9 @@ struct Identifier {
 }
 
 fn main() {
-    let program = Program::parse("(a - b (1, -2) (3) ** 2) / 3;");
+    let program = Program::parse("
+        let a = 10;
+        (a - b (1, -2) (3) ** 2) / 3;
+    ");
     program.print();
 }

@@ -14,13 +14,21 @@ ident = @{ (alpha | "_") ~ (alpha | digit | "_")* }
 
 main = _{ SOI ~ stmt* ~ EOI }
 
-stmt = _{ stmt_expr /* | typebind | varbind */ }
+stmt = _{ stmt_valbind | stmt_expr /* | typebind */ }
 
 stmt_expr = { expr ~ ";" }
 
-primary = _{ prefix* ~ (number | string | boolean | ident | tuple) ~ suffix* }
+stmt_valbind = { "let" ~ pattern ~ type_anno ~ "=" ~ expr ~ ";" }
 
-expr = { primary ~ (infix ~ primary)* }
+pattern = _{ ident | patt_tuple }
+
+patt_tuple = { "(" ~ pattern ~ ("," ~ pattern)* ~ ")" }
+
+type_anno = { (":" ~ type)? }
+
+val_atom = _{ prefix* ~ (number | string | boolean | ident | tuple) ~ suffix* }
+
+expr = { val_atom ~ (infix ~ val_atom)* }
 
 tuple = { "(" ~ expr ~ ("," ~ expr)* ~ ")" }
 
@@ -30,9 +38,14 @@ prefix = _{ neg }
 suffix = _{ call }
   call = { tuple }
 
-infix = _{ add | sub | pow | mul | div }
+infix = _{ add | sub | pow | mul | div | arrow }
   add = { "+" }
   sub = { "-" }
   pow = { "**" }
   mul = { "*" }
   div = { "/" }
+  arrow = { "->" }
+
+type = { type_atom ~ (infix ~ type_atom)* }
+
+type_atom = { ident | "(" ~ type ~ ")" }
