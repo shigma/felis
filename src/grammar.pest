@@ -26,9 +26,11 @@ patt_tuple = { "(" ~ pattern ~ ("," ~ pattern)* ~ ")" }
 
 type_anno = { (":" ~ type)? }
 
-val_atom = _{ prefix* ~ (number | string | boolean | ident | tuple) ~ suffix* }
+val_atom = _{ prefix* ~ (number | string | boolean | func | ident | tuple) ~ suffix* }
 
 expr = { val_atom ~ (infix ~ val_atom)* }
+
+func = { "fn" ~ pattern ~ "->" ~ expr }
 
 tuple = { "(" ~ expr ~ ("," ~ expr)* ~ ")" }
 

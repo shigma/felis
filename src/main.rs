@@ -2,9 +2,8 @@ extern crate pest;
 #[macro_use]
 extern crate pest_derive;
 
-use std::cell::RefCell;
+use std::collections::HashMap;
 use std::fmt::Debug;
-use std::rc::Rc;
 
 use pest::{Parser, iterators::Pairs, iterators::Pair};
 use pest::pratt_parser::*;
@@ -16,6 +15,28 @@ struct Grammar;
 struct Formatter {
     indent: usize,
     label: Option<String>,
+}
+
+trait Node {
+    fn print(&self, f: Formatter);
+}
+
+impl Formatter {
+    fn new() -> Formatter {
+        Formatter { indent: 0, label: None }
+    }
+
+    fn header(&self) {
+        let prefix = match self.label {
+            Some(ref label) => format!("{}: ", label),
+            None => "".to_string(),
+        };
+        print!("{:indent$}{}", "", prefix, indent = self.indent);
+    }
+
+    fn indent(&self, label: Option<String>) -> Formatter {
+        Formatter { indent: self.indent + 2, label }
+    }
 }
 
 #[derive(Debug)]
@@ -39,7 +60,7 @@ impl Program {
                     let pattern = Pattern::parse(inner.next().unwrap());
                     let _ = inner.next().unwrap();
                     let expression = Expression::parse(inner.next().unwrap().into_inner());
-                    statements.push(Statement::ValueBind(ValueBind { pattern, expression }));
+                    statements.push(Statement::ValueBind(ValueBind { pattern: Box::from(pattern), expression: Box::from(expression) }));
                 },
                 _ => {},
             }
@@ -49,9 +70,17 @@ impl Program {
 
     fn print(&self) {
         println!("Program");
+        let formatter = Formatter::new();
         for statement in &self.statements {
-            statement.print(Formatter { indent: 2, label: None });
+            statement.print(formatter.indent(None));
         }
+    }
+
+    fn eval(&self) {
+        // let mut ctx = Context::new();
+        // for statement in &self.statements {
+        //     statement.eval(ctx);
+        // }
     }
 }
 
@@ -69,17 +98,18 @@ enum Statement {
     // Block(Block)
 }
 
-impl Statement {
+impl Node for Statement {
     fn print(&self, f: Formatter) {
+        f.header();
         match self {
             Statement::Expression(expression) => {
-                println!("{:indent$}ExpressionStatement", "", indent = f.indent);
-                expression.print(Formatter { indent: f.indent + 2, label: None });
+                println!("ExpressionStatement");
+                expression.print(f.indent(None));
             },
             Statement::ValueBind(bind) => {
-                println!("{:indent$}ValueBind", "", indent = f.indent);
-                bind.pattern.print(Formatter { indent: f.indent + 2, label: Some("pattern".to_string()) });
-                bind.expression.print(Formatter { indent: f.indent + 2, label: Some("expression".to_string()) });
+                println!("ValueBind");
+                bind.pattern.print(f.indent(Some("pattern".to_string())));
+                bind.expression.print(f.indent(Some("expression".to_string())));
             },
         }
     }
@@ -87,8 +117,8 @@ impl Statement {
 
 #[derive(Debug)]
 struct ValueBind {
-    pattern: Pattern,
-    expression: Expression,
+    pattern: Box<Pattern>,
+    expression: Box<Expression>,
 }
 
 #[derive(Debug)]
@@ -112,20 +142,19 @@ impl Pattern {
             _ => panic!("Unexpected rule: {:?}", pair.as_rule()),
         }
     }
+}
 
+impl Node for Pattern {
     fn print(&self, f: Formatter) {
-        let prefix = match f.label {
-            Some(label) => format!("{}: ", label),
-            None => "".to_string(),
-        };
+        f.header();
         match self {
             Pattern::Identifier(identifier) => {
-                println!("{:indent$}{}Identifier ({})", "", prefix, identifier.name, indent = f.indent);
+                println!("Identifier ({})", identifier.name);
             },
             Pattern::Tuple(exprs) => {
-                println!("{:indent$}{}Tuple", "", prefix, indent = f.indent);
+                println!("Tuple");
                 for (i, expr) in exprs.iter().enumerate() {
-                    expr.print(Formatter { indent: f.indent + 2, label: Some(format!("{}", i)) });
+                    expr.print(f.indent(Some(format!("{}", i))));
                 }
             }
         }
@@ -136,6 +165,7 @@ impl Pattern {
 enum Expression {
     Binary(Binary),
     Unary(Unary),
+    Function(Function),
     Call(Call),
     Number(String),
     String(String),
@@ -166,6 +196,12 @@ impl Expression {
                         Expression::Tuple(vec)
                     }
                 },
+                Rule::func => {
+                    let mut inner = primary.into_inner();
+                    let pattern = Pattern::parse(inner.next().unwrap());
+                    let expression = Expression::parse(inner.next().unwrap().into_inner());
+                    Expression::Function(Function { pattern: Box::new(pattern), expression: Box::new(expression) })
+                },
                 _ => panic!("Unexpected rule: {:?}", primary.as_rule()),
             })
             .map_infix(|lhs, op, rhs| {
@@ -176,49 +212,53 @@ impl Expression {
             })
             .map_postfix(|lhs, op| {
                 Expression::Call(Call {
-                    callee: Rc::new(RefCell::new(lhs)),
-                    argument: Rc::new(RefCell::new(Expression::parse(op.into_inner()))),
+                    callee: Box::new(lhs),
+                    argument: Box::new(Expression::parse(op.into_inner())),
                 })
             })
             .parse(pairs)
     }
+}
 
+impl Node for Expression {
     fn print(&self, f: Formatter) {
-        let prefix = match f.label {
-            Some(label) => format!("{}: ", label),
-            None => "".to_string(),
-        };
+        f.header();
         match self {
             Expression::Binary(binary) => {
-                println!("{:indent$}{}BinaryExpression ({})", "", prefix, binary.operator, indent = f.indent);
-                binary.left.borrow().print(Formatter { indent: f.indent + 2, label: Some("left".to_string()) });
-                binary.right.borrow().print(Formatter { indent: f.indent + 2, label: Some("right".to_string()) });
+                println!("BinaryExpression ({})", binary.operator);
+                binary.left.print(f.indent(Some("left".to_string())));
+                binary.right.print(f.indent(Some("right".to_string())));
             },
             Expression::Unary(unary) => {
-                println!("{:indent$}{}UnaryExpression ({})", "", prefix, unary.operator, indent = f.indent);
-                unary.operand.borrow().print(Formatter { indent: f.indent + 2, label: None });
+                println!("UnaryExpression ({})", unary.operator);
+                unary.operand.print(f.indent(None));
             },
             Expression::Number(number) => {
-                println!("{:indent$}{}NumberLiteral ({})", "", prefix, number, indent = f.indent);
+                println!("NumberLiteral ({})", number);
             },
             Expression::String(string) => {
-                println!("{:indent$}{}StringLiteral ({})", "", prefix, string, indent = f.indent);
+                println!("StringLiteral ({})", string);
             },
             Expression::Boolean(boolean) => {
-                println!("{:indent$}{}BooleanLiteral ({})", "", prefix, boolean, indent = f.indent);
+                println!("BooleanLiteral ({})", boolean);
             },
             Expression::Identifier(identifier) => {
-                println!("{:indent$}{}Identifier ({})", "", prefix, identifier.name, indent = f.indent);
+                println!("Identifier ({})", identifier.name);
+            },
+            Expression::Function(function) => {
+                println!("Function");
+                function.pattern.print(f.indent(Some("pattern".to_string())));
+                function.expression.print(f.indent(Some("expression".to_string())));
             },
             Expression::Call(call) => {
-                println!("{:indent$}{}FunctionCall", "", prefix, indent = f.indent);
-                call.callee.borrow().print(Formatter { indent: f.indent + 2, label: Some("callee".to_string()) });
-                call.argument.borrow().print(Formatter { indent: f.indent + 2, label: Some("argument".to_string()) });
+                println!("FunctionCall");
+                call.callee.print(f.indent(Some("callee".to_string())));
+                call.argument.print(f.indent(Some("argument".to_string())));
             },
             Expression::Tuple(exprs) => {
-                println!("{:indent$}{}Tuple", "", prefix, indent = f.indent);
+                println!("Tuple");
                 for (i, expr) in exprs.iter().enumerate() {
-                    expr.print(Formatter { indent: f.indent + 2, label: Some(format!("{}", i)) });
+                    expr.print(f.indent(Some(format!("{}", i))));
                 }
             },
         }
@@ -228,14 +268,14 @@ impl Expression {
 #[derive(Debug)]
 struct Unary {
     operator: String,
-    operand: Rc<RefCell<Expression>>,
+    operand: Box<Expression>,
 }
 
 impl Unary {
     fn parse(prefix: Pair<'_, Rule>, operand: Expression) -> Unary {
         Unary {
             operator: prefix.as_str().to_string(),
-            operand: Rc::new(RefCell::new(operand)),
+            operand: Box::new(operand),
         }
     }
 }
@@ -243,24 +283,24 @@ impl Unary {
 #[derive(Debug)]
 struct Binary {
     operator: String,
-    left: Rc<RefCell<Expression>>,
-    right: Rc<RefCell<Expression>>,
+    left: Box<Expression>,
+    right: Box<Expression>,
 }
 
 impl Binary {
     fn parse(left: Expression, infix: Pair<'_, Rule>, right: Expression) -> Binary {
         Binary {
             operator: infix.as_str().to_string(),
-            left: Rc::new(RefCell::new(left)),
-            right: Rc::new(RefCell::new(right)),
+            left: Box::new(left),
+            right: Box::new(right),
         }
     }
 }
 
 #[derive(Debug)]
 struct Call {
-    callee: Rc<RefCell<Expression>>,
-    argument: Rc<RefCell<Expression>>,
+    callee: Box<Expression>,
+    argument: Box<Expression>,
 }
 
 #[derive(Debug)]
@@ -268,10 +308,18 @@ struct Identifier {
     name: String,
 }
 
+#[derive(Debug)]
+struct Function {
+    pattern: Box<Pattern>,
+    expression: Box<Expression>,
+}
+
 fn main() {
     let program = Program::parse("
         let a = 10;
+        let b = fn (x, y) -> fn (z) -> x + y + z;
         (a - b (1, -2) (3) ** 2) / 3;
     ");
     program.print();
+    program.eval();
 }
