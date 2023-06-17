@@ -4,11 +4,13 @@ extern crate pest_derive;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::fmt::Debug;
+use std::fmt::{Debug, Display};
+use std::fs::File;
+use std::io::Read;
 use std::rc::Rc;
 
 use pest::{Parser, iterators::Pairs, iterators::Pair};
-use pest::pratt_parser::*;
+use pest::{pratt_parser::*, Span};
 
 #[derive(Parser)]
 #[grammar = "grammar.pest"]
@@ -42,6 +44,21 @@ impl Formatter {
 }
 
 #[derive(Debug, Clone)]
+struct Range {
+    start: (usize, usize),
+    end: (usize, usize),
+}
+
+impl Range {
+    fn from(span: &Span) -> Range {
+        Range {
+            start: span.start_pos().line_col(),
+            end: span.start_pos().line_col(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 struct Context {
     values: HashMap<String, Box<Value>>,
 }
@@ -53,10 +70,10 @@ impl Context {
 
     fn bind(&mut self, pattern: &Pattern, value: Value) {
         match pattern {
-            Pattern::Identifier(identifier) => {
+            Pattern::Identifier(_, identifier) => {
                 self.values.insert(identifier.name.clone(), Box::from(value));
             },
-            Pattern::Tuple(tuple) => {
+            Pattern::Tuple(_, tuple) => {
                 if let Value::Tuple(values) = value {
                     for (pattern, value) in tuple.into_iter().zip(values.into_iter()) {
                         self.bind(pattern, value);
@@ -75,22 +92,23 @@ struct Program {
 }
 
 impl Program {
-    fn parse(input: &str) -> Program {
-        let pairs = Grammar::parse(Rule::main, input)
+    fn parse(input: &String) -> Program {
+        let pairs = Grammar::parse(Rule::main, input.as_str())
             .unwrap_or_else(|e| panic!("{}", e));
         let mut statements = Vec::new();
         for pair in pairs {
+            let range = Range::from(&pair.as_span());
             match pair.as_rule() {
                 Rule::stmt_expr => {
                     let inner = pair.into_inner().next().unwrap();
-                    statements.push(Statement::Expression(Expression::parse(inner.into_inner())));
+                    statements.push(Statement::Expression(range, Expression::parse(inner.into_inner())));
                 },
                 Rule::stmt_valbind => {
                     let mut inner = pair.into_inner();
                     let pattern = Pattern::parse(inner.next().unwrap());
                     let _ = inner.next().unwrap();
                     let expression = Expression::parse(inner.next().unwrap().into_inner());
-                    statements.push(Statement::ValueBind(ValueBind { pattern: Box::from(pattern), expression: Box::from(expression) }));
+                    statements.push(Statement::ValueBind(range, ValueBind { pattern: Box::from(pattern), expression: Box::from(expression) }));
                 },
                 _ => {},
             }
@@ -114,27 +132,19 @@ impl Program {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum Statement {
-    Expression(Expression),
-    ValueBind(ValueBind),
-    // Assignment(Assignment),
-    // If(If),
-    // While(While),
-    // For(For),
-    // Return(Return),
-    // Break(Break),
-    // Continue(Continue),
-    // Block(Block)
+    Expression(Range, Expression),
+    ValueBind(Range, ValueBind),
 }
 
 impl Statement {
     fn eval(&self, ctx: &Rc<RefCell<Context>>) {
         match self {
-            Statement::Expression(expr) => {
+            Statement::Expression(_, expr) => {
                 println!("{:?}", expr.eval(ctx));
             },
-            Statement::ValueBind(bind) => {
+            Statement::ValueBind(_, bind) => {
                 ctx.borrow_mut().bind(&bind.pattern, bind.expression.eval(ctx));
             },
         }
@@ -145,11 +155,11 @@ impl Node for Statement {
     fn print(&self, f: Formatter) {
         f.header();
         match self {
-            Statement::Expression(expr) => {
+            Statement::Expression(_, expr) => {
                 println!("ExpressionStatement");
                 expr.print(f.indent(None));
             },
-            Statement::ValueBind(bind) => {
+            Statement::ValueBind(_, bind) => {
                 println!("ValueBind");
                 bind.pattern.print(f.indent(Some("pattern".to_string())));
                 bind.expression.print(f.indent(Some("expression".to_string())));
@@ -158,7 +168,7 @@ impl Node for Statement {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct ValueBind {
     pattern: Box<Pattern>,
     expression: Box<Expression>,
@@ -166,20 +176,21 @@ struct ValueBind {
 
 #[derive(Debug, Clone)]
 enum Pattern {
-    Identifier(Identifier),
-    Tuple(Vec<Pattern>),
+    Identifier(Range, Identifier),
+    Tuple(Range, Vec<Pattern>),
 }
 
 impl Pattern {
     fn parse(pair: Pair<'_, Rule>) -> Pattern {
+        let range = Range::from(&pair.as_span());
         match pair.as_rule() {
-            Rule::ident => Pattern::Identifier(Identifier { name: pair.as_str().to_string() }),
+            Rule::ident => Pattern::Identifier(range, Identifier { name: pair.as_str().to_string() }),
             Rule::patt_tuple => {
                 let mut vec: Vec<Pattern> = pair.into_inner().map(|pair| Pattern::parse(pair)).collect();
                 if vec.len() == 1 {
                     vec.swap_remove(0)
                 } else {
-                    Pattern::Tuple(vec)
+                    Pattern::Tuple(range, vec)
                 }
             },
             _ => panic!("Unexpected rule: {:?}", pair.as_rule()),
@@ -191,10 +202,10 @@ impl Node for Pattern {
     fn print(&self, f: Formatter) {
         f.header();
         match self {
-            Pattern::Identifier(identifier) => {
+            Pattern::Identifier(_, identifier) => {
                 println!("Identifier ({})", identifier.name);
             },
-            Pattern::Tuple(exprs) => {
+            Pattern::Tuple(_, exprs) => {
                 println!("Tuple");
                 for (i, expr) in exprs.iter().enumerate() {
                     expr.print(f.indent(Some(format!("{}", i))));
@@ -231,15 +242,15 @@ impl Value {
 
 #[derive(Debug, Clone)]
 enum Expression {
-    Binary(Binary),
-    Unary(Unary),
-    Function(Function),
-    Call(Call),
-    Number(String),
-    String(String),
-    Boolean(bool),
-    Identifier(Identifier),
-    Tuple(Vec<Expression>),
+    Binary(Range, Binary),
+    Unary(Range, Unary),
+    Function(Range, Function),
+    Call(Range, Call),
+    Number(Range, String),
+    String(Range, String),
+    Boolean(Range, bool),
+    Identifier(Range, Identifier),
+    Tuple(Range, Vec<Expression>),
 }
 
 impl Expression {
@@ -250,36 +261,39 @@ impl Expression {
             .op(Op::infix(Rule::pow, Assoc::Right))
             .op(Op::prefix(Rule::neg))
             .op(Op::postfix(Rule::call))
-            .map_primary(|primary| match primary.as_rule() {
-                Rule::number => Expression::Number(primary.as_str().to_string()),
-                Rule::string => Expression::String(primary.as_str().to_string()),
-                Rule::tru => Expression::Boolean(true),
-                Rule::fls => Expression::Boolean(false),
-                Rule::ident => Expression::Identifier(Identifier { name: primary.as_str().to_string() }),
-                Rule::tuple => {
-                    let mut vec: Vec<Expression> = primary.into_inner().map(|pair| Expression::parse(pair.into_inner())).collect();
-                    if vec.len() == 1 {
-                        vec.swap_remove(0)
-                    } else {
-                        Expression::Tuple(vec)
-                    }
-                },
-                Rule::func => {
-                    let mut inner = primary.into_inner();
-                    let pattern = Pattern::parse(inner.next().unwrap());
-                    let expression = Expression::parse(inner.next().unwrap().into_inner());
-                    Expression::Function(Function { pattern: Box::new(pattern), expression: Box::new(expression) })
-                },
-                _ => panic!("Unexpected rule: {:?}", primary.as_rule()),
+            .map_primary(|primary| {
+                let range = Range::from(&primary.as_span());
+                match primary.as_rule() {
+                    Rule::number => Expression::Number(range, primary.as_str().to_string()),
+                    Rule::string => Expression::String(range, primary.as_str().to_string()),
+                    Rule::tru => Expression::Boolean(range, true),
+                    Rule::fls => Expression::Boolean(range, false),
+                    Rule::ident => Expression::Identifier(range, Identifier { name: primary.as_str().to_string() }),
+                    Rule::tuple => {
+                        let mut vec: Vec<Expression> = primary.into_inner().map(|pair| Expression::parse(pair.into_inner())).collect();
+                        if vec.len() == 1 {
+                            vec.swap_remove(0)
+                        } else {
+                            Expression::Tuple(range, vec)
+                        }
+                    },
+                    Rule::func => {
+                        let mut inner = primary.into_inner();
+                        let pattern = Pattern::parse(inner.next().unwrap());
+                        let expression = Expression::parse(inner.next().unwrap().into_inner());
+                        Expression::Function(range, Function { pattern: Box::new(pattern), expression: Box::new(expression) })
+                    },
+                    _ => panic!("Unexpected rule: {:?}", primary.as_rule()),
+                }
             })
             .map_infix(|lhs, op, rhs| {
-                Expression::Binary(Binary::parse(lhs, op, rhs))
+                Expression::Binary(Range::from(&op.as_span()), Binary::parse(lhs, op, rhs))
             })
             .map_prefix(|op, rhs| {
-                Expression::Unary(Unary::parse(op, rhs))
+                Expression::Unary(Range::from(&op.as_span()), Unary::parse(op, rhs))
             })
             .map_postfix(|lhs, op| {
-                Expression::Call(Call {
+                Expression::Call(Range::from(&op.as_span()), Call {
                     callee: Box::new(lhs),
                     argument: Box::new(Expression::parse(op.into_inner())),
                 })
@@ -289,7 +303,7 @@ impl Expression {
 
     fn eval(&self, ctx: &Rc<RefCell<Context>>) -> Value {
         match self {
-            Expression::Binary(binary) => {
+            Expression::Binary(_, binary) => {
                 let left = binary.left.eval(ctx);
                 let right = binary.right.eval(ctx);
                 match binary.operator {
@@ -298,32 +312,30 @@ impl Expression {
                     BinaryOperator::Mul => Value::Number(left.as_number() * right.as_number()),
                     BinaryOperator::Div => Value::Number(left.as_number() / right.as_number()),
                     BinaryOperator::Pow => Value::Number(left.as_number().powf(right.as_number())),
-                    _ => panic!("Unexpected operator: {:?}", binary.operator),
                 }
             },
-            Expression::Unary(unary) => {
+            Expression::Unary(_, unary) => {
                 let operand = unary.operand.eval(ctx).as_number();
                 match unary.operator {
                     UnaryOperator::Neg => Value::Number(-operand),
-                    _ => panic!("Unexpected operator: {:?}", unary.operator),
                 }
             },
-            Expression::Number(number) => Value::Number(number.parse().unwrap()),
-            Expression::String(string) => Value::String(string.clone()),
-            Expression::Boolean(boolean) => Value::Boolean(*boolean),
-            Expression::Identifier(identifier) => {
+            Expression::Number(_, number) => Value::Number(number.parse().unwrap()),
+            Expression::String(_, string) => Value::String(string.clone()),
+            Expression::Boolean(_, boolean) => Value::Boolean(*boolean),
+            Expression::Identifier(_, identifier) => {
                 match ctx.as_ref().borrow().values.get(&identifier.name) {
                     Some(value) => value.as_ref().clone(),
                     None => panic!("Undefined variable: {}", identifier.name),
                 }
             },
-            Expression::Tuple(exprs) => {
+            Expression::Tuple(_, exprs) => {
                 Value::Tuple(exprs.iter().map(|expr| expr.eval(ctx)).collect())
             },
-            Expression::Function(function) => {
+            Expression::Function(_, function) => {
                 Value::Function(function.clone(), ctx.clone())
             },
-            Expression::Call(call) => {
+            Expression::Call(_, call) => {
                 let callee = call.callee.eval(ctx);
                 let argument = call.argument.eval(ctx);
                 let (func, ctx) = callee.as_function();
@@ -340,38 +352,38 @@ impl Node for Expression {
     fn print(&self, f: Formatter) {
         f.header();
         match self {
-            Expression::Binary(binary) => {
-                println!("BinaryExpression ({:?})", binary.operator);
+            Expression::Binary(_, binary) => {
+                println!("BinaryExpression ({})", binary.operator);
                 binary.left.print(f.indent(Some("left".to_string())));
                 binary.right.print(f.indent(Some("right".to_string())));
             },
-            Expression::Unary(unary) => {
-                println!("UnaryExpression ({:?})", unary.operator);
+            Expression::Unary(_, unary) => {
+                println!("UnaryExpression ({})", unary.operator);
                 unary.operand.print(f.indent(None));
             },
-            Expression::Number(number) => {
+            Expression::Number(_, number) => {
                 println!("NumberLiteral ({})", number);
             },
-            Expression::String(string) => {
+            Expression::String(_, string) => {
                 println!("StringLiteral ({})", string);
             },
-            Expression::Boolean(boolean) => {
+            Expression::Boolean(_, boolean) => {
                 println!("BooleanLiteral ({})", boolean);
             },
-            Expression::Identifier(identifier) => {
+            Expression::Identifier(_, identifier) => {
                 println!("Identifier ({})", identifier.name);
             },
-            Expression::Function(function) => {
+            Expression::Function(_, function) => {
                 println!("Function");
                 function.pattern.print(f.indent(Some("pattern".to_string())));
                 function.expression.print(f.indent(Some("expression".to_string())));
             },
-            Expression::Call(call) => {
+            Expression::Call(_, call) => {
                 println!("FunctionCall");
                 call.callee.print(f.indent(Some("callee".to_string())));
                 call.argument.print(f.indent(Some("argument".to_string())));
             },
-            Expression::Tuple(exprs) => {
+            Expression::Tuple(_, exprs) => {
                 println!("Tuple");
                 for (i, expr) in exprs.iter().enumerate() {
                     expr.print(f.indent(Some(format!("{}", i))));
@@ -384,6 +396,14 @@ impl Node for Expression {
 #[derive(Debug, Clone)]
 enum UnaryOperator {
     Neg,
+}
+
+impl Display for UnaryOperator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            UnaryOperator::Neg => write!(f, "-"),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -411,6 +431,18 @@ enum BinaryOperator {
     Mul,
     Div,
     Pow,
+}
+
+impl Display for BinaryOperator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BinaryOperator::Add => write!(f, "+"),
+            BinaryOperator::Sub => write!(f, "-"),
+            BinaryOperator::Mul => write!(f, "*"),
+            BinaryOperator::Div => write!(f, "/"),
+            BinaryOperator::Pow => write!(f, "**"),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -455,11 +487,10 @@ struct Function {
 }
 
 fn main() {
-    let program = Program::parse("
-        let a = 10;
-        let b = fn (x, y) -> fn (z) -> x + y + z;
-        (a - b (1, -2) (3) ** 2) / 3;
-    ");
+    let mut file = File::open("examples/1.txt").unwrap();
+    let mut source = String::new();
+    file.read_to_string(&mut source).unwrap();
+    let program = Program::parse(&source);
     program.print();
     program.eval();
 }
