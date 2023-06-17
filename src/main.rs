@@ -2,6 +2,7 @@ extern crate pest;
 #[macro_use]
 extern crate pest_derive;
 
+use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::fmt::Debug;
 
@@ -36,6 +37,16 @@ impl Formatter {
 
     fn indent(&self, label: Option<String>) -> Formatter {
         Formatter { indent: self.indent + 2, label }
+    }
+}
+
+struct Context {
+    values: HashMap<String, Box<Value>>,
+}
+
+impl Context {
+    fn new() -> Context {
+        Context { values: HashMap::new() }
     }
 }
 
@@ -77,10 +88,10 @@ impl Program {
     }
 
     fn eval(&self) {
-        // let mut ctx = Context::new();
-        // for statement in &self.statements {
-        //     statement.eval(ctx);
-        // }
+        let mut ctx = Context::new();
+        for statement in &self.statements {
+            statement.eval(&mut ctx);
+        }
     }
 }
 
@@ -98,13 +109,31 @@ enum Statement {
     // Block(Block)
 }
 
+impl Statement {
+    fn eval(&self, ctx: &mut Context) {
+        match self {
+            Statement::Expression(expr) => {
+                expr.eval(ctx);
+            },
+            Statement::ValueBind(bind) => {
+                if let Pattern::Identifier(identifier) = bind.pattern.borrow() {
+                    ctx.values.insert(identifier.name.clone(), Box::from(bind.expression.eval(ctx)));
+                } else {
+                    panic!("Unsupported pattern: {:?}", bind.pattern);
+                }
+            },
+            _ => panic!("Unsuppored statement: {:?}", self)
+        }
+    }
+}
+
 impl Node for Statement {
     fn print(&self, f: Formatter) {
         f.header();
         match self {
-            Statement::Expression(expression) => {
+            Statement::Expression(expr) => {
                 println!("ExpressionStatement");
-                expression.print(f.indent(None));
+                expr.print(f.indent(None));
             },
             Statement::ValueBind(bind) => {
                 println!("ValueBind");
@@ -121,7 +150,7 @@ struct ValueBind {
     expression: Box<Expression>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum Pattern {
     Identifier(Identifier),
     Tuple(Vec<Pattern>),
@@ -161,7 +190,32 @@ impl Node for Pattern {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
+enum Value {
+    Number(f64),
+    String(String),
+    Boolean(bool),
+    Tuple(Vec<Value>),
+    Function(Function),
+}
+
+impl Value {
+    fn as_number(&self) -> f64 {
+        match self {
+            Value::Number(number) => *number,
+            _ => panic!("Expected number"),
+        }
+    }
+
+    fn as_function(&self) -> &Function {
+        match self {
+            Value::Function(function) => function,
+            _ => panic!("Expected function"),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 enum Expression {
     Binary(Binary),
     Unary(Unary),
@@ -218,6 +272,40 @@ impl Expression {
             })
             .parse(pairs)
     }
+
+    fn eval(&self, ctx: &Context) -> Value {
+        match self {
+            Expression::Binary(binary) => {
+                let left = binary.left.eval(ctx).as_number();
+                let right = binary.right.eval(ctx).as_number();
+                match binary.operator.as_str() {
+                    "+" => Value::Number(left + right),
+                    "-" => Value::Number(left - right),
+                    "*" => Value::Number(left * right),
+                    "/" => Value::Number(left / right),
+                    "**" => Value::Number(left.powf(right)),
+                    _ => panic!("Unexpected operator: {}", binary.operator),
+                }
+            },
+            Expression::Unary(unary) => {
+                let operand = unary.operand.eval(ctx).as_number();
+                match unary.operator.as_str() {
+                    "-" => Value::Number(-operand),
+                    _ => panic!("Unexpected operator: {}", unary.operator),
+                }
+            },
+            Expression::Number(number) => Value::Number(number.parse().unwrap()),
+            Expression::String(string) => Value::String(string.clone()),
+            Expression::Boolean(boolean) => Value::Boolean(*boolean),
+            Expression::Identifier(identifier) => {
+                match ctx.values.get(&identifier.name) {
+                    Some(value) => value.as_ref().clone(),
+                    None => panic!("Undefined variable: {}", identifier.name),
+                }
+            },
+            _ => panic!("Unsuppored evaluation: {:?}", self)
+        }
+    }
 }
 
 impl Node for Expression {
@@ -265,7 +353,7 @@ impl Node for Expression {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Unary {
     operator: String,
     operand: Box<Expression>,
@@ -280,7 +368,7 @@ impl Unary {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Binary {
     operator: String,
     left: Box<Expression>,
@@ -297,18 +385,18 @@ impl Binary {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Call {
     callee: Box<Expression>,
     argument: Box<Expression>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Identifier {
     name: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Function {
     pattern: Box<Pattern>,
     expression: Box<Expression>,
