@@ -3,8 +3,10 @@ extern crate pest;
 extern crate pest_derive;
 
 use std::borrow::Borrow;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt::Debug;
+use std::rc::Rc;
 
 use pest::{Parser, iterators::Pairs, iterators::Pair};
 use pest::pratt_parser::*;
@@ -40,6 +42,7 @@ impl Formatter {
     }
 }
 
+#[derive(Debug, Clone)]
 struct Context {
     values: HashMap<String, Box<Value>>,
 }
@@ -47,6 +50,23 @@ struct Context {
 impl Context {
     fn new() -> Context {
         Context { values: HashMap::new() }
+    }
+
+    fn bind(&mut self, pattern: &Pattern, value: Value) {
+        match pattern {
+            Pattern::Identifier(identifier) => {
+                self.values.insert(identifier.name.clone(), Box::from(value));
+            },
+            Pattern::Tuple(tuple) => {
+                if let Value::Tuple(values) = value {
+                    for (pattern, value) in tuple.into_iter().zip(values.into_iter()) {
+                        self.bind(pattern, value);
+                    }
+                } else {
+                    panic!("Expected tuple");
+                }
+            },
+        }
     }
 }
 
@@ -88,9 +108,9 @@ impl Program {
     }
 
     fn eval(&self) {
-        let mut ctx = Context::new();
+        let ctx = Rc::from(RefCell::from(Context::new()));
         for statement in &self.statements {
-            statement.eval(&mut ctx);
+            statement.eval(ctx);
         }
     }
 }
@@ -110,19 +130,14 @@ enum Statement {
 }
 
 impl Statement {
-    fn eval(&self, ctx: &mut Context) {
+    fn eval(&self, ctx: Rc<RefCell<Context>>) {
         match self {
             Statement::Expression(expr) => {
                 expr.eval(ctx);
             },
             Statement::ValueBind(bind) => {
-                if let Pattern::Identifier(identifier) = bind.pattern.borrow() {
-                    ctx.values.insert(identifier.name.clone(), Box::from(bind.expression.eval(ctx)));
-                } else {
-                    panic!("Unsupported pattern: {:?}", bind.pattern);
-                }
+                ctx.borrow_mut().bind(&bind.pattern, bind.expression.eval(ctx));
             },
-            _ => panic!("Unsuppored statement: {:?}", self)
         }
     }
 }
@@ -196,7 +211,7 @@ enum Value {
     String(String),
     Boolean(bool),
     Tuple(Vec<Value>),
-    Function(Function),
+    Function(Function, Rc<RefCell<Context>>),
 }
 
 impl Value {
@@ -207,9 +222,9 @@ impl Value {
         }
     }
 
-    fn as_function(&self) -> &Function {
+    fn as_function(&self) -> (&Function, &Rc<RefCell<Context>>) {
         match self {
-            Value::Function(function) => function,
+            Value::Function(function, ctx) => (function, ctx),
             _ => panic!("Expected function"),
         }
     }
@@ -273,7 +288,7 @@ impl Expression {
             .parse(pairs)
     }
 
-    fn eval(&self, ctx: &Context) -> Value {
+    fn eval(&self, ctx: Rc<RefCell<Context>>) -> Value {
         match self {
             Expression::Binary(binary) => {
                 let left = binary.left.eval(ctx).as_number();
@@ -298,10 +313,24 @@ impl Expression {
             Expression::String(string) => Value::String(string.clone()),
             Expression::Boolean(boolean) => Value::Boolean(*boolean),
             Expression::Identifier(identifier) => {
-                match ctx.values.get(&identifier.name) {
+                match ctx.borrow().deref().values.get(&identifier.name) {
                     Some(value) => value.as_ref().clone(),
                     None => panic!("Undefined variable: {}", identifier.name),
                 }
+            },
+            Expression::Tuple(exprs) => {
+                Value::Tuple(exprs.iter().map(|expr| expr.eval(ctx)).collect())
+            },
+            Expression::Function(function) => {
+                Value::Function(function.clone(), ctx)
+            },
+            Expression::Call(call) => {
+                let callee = call.callee.eval(ctx);
+                let argument = call.argument.eval(ctx);
+                let (func, ctx) = callee.as_function();
+                let ctx = ctx.clone();
+                ctx.borrow_mut().bind(&func.pattern, argument);
+                func.expression.eval(ctx)
             },
             _ => panic!("Unsuppored evaluation: {:?}", self)
         }
