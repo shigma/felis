@@ -18,11 +18,13 @@ stmt = _{ stmt_valbind | stmt_expr /* | typebind */ }
 
 stmt_expr = { expr ~ ";" }
 
-stmt_valbind = { "let" ~ pattern ~ type_anno ~ "=" ~ expr ~ ";" }
+stmt_valbind = { "let" ~ patt ~ "=" ~ expr ~ ";" }
 
-pattern = _{ ident | patt_tuple }
+patt = _{ patt_ident | patt_tuple }
 
-patt_tuple = { "(" ~ pattern ~ ("," ~ pattern)* ~ ")" }
+patt_ident = { ident ~ type_anno }
+
+patt_tuple = { "(" ~ patt ~ ("," ~ patt)* ~ ")" }
 
 type_anno = { (":" ~ type)? }
 
@@ -32,7 +34,7 @@ val_tuple = { "(" ~ expr ~ ("," ~ expr)* ~ ")" }
 
 expr = { val_atom ~ (val_infix ~ val_atom)* }
 
-func = { "fn" ~ pattern ~ "->" ~ expr }
+func = { "fn" ~ patt_tuple ~ "->" ~ expr }
 
 prefix = _{ neg }
   neg = { "-" }

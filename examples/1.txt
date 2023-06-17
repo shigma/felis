@@ -1,3 +1,3 @@
 let a = 10;
-let b = fn (x, y) -> fn (z) -> x + y + z;
+let b = fn (x: number, y: number) -> fn (z: number) -> x + y + z;
 (a - b (1, -2) (3) ** 2) / 3;
