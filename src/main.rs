@@ -66,14 +66,24 @@ struct Context {
 
 impl Context {
     fn new() -> Context {
-        Context { values: HashMap::new(), types: HashMap::new() }
+        let mut ctx = Context { values: HashMap::new(), types: HashMap::new() };
+        ctx.types.insert("number".to_string(), Box::from(Type::Number()));
+        ctx.types.insert("string".to_string(), Box::from(Type::String()));
+        ctx.types.insert("boolean".to_string(), Box::from(Type::Boolean()));
+        ctx.types.insert("top".to_string(), Box::from(Type::Top()));
+        ctx.types.insert("bottom".to_string(), Box::from(Type::Bottom()));
+        ctx
     }
 
     fn bind(&mut self, pattern: &Pattern, val: &Value, ty: &Type) {
         match pattern {
-            Pattern::Identifier(_, ident, oty) => {
-                if Type::subtype(ty, &pattern.to_type(&Rc::new(RefCell::new(self)))) {
-                    self.values.insert(ident.name.clone(), Box::from((val.clone(), ty.clone())));
+            Pattern::Identifier(_, ident, _) => {
+                let ty2 = &pattern.to_type(&Rc::new(RefCell::new(self.clone())));
+                if Type::subtype(ty, ty2) {
+                    self.values.insert(ident.name.clone(), Box::from((val.clone(), match ty2 {
+                        Type::Unknown() => ty.clone(),
+                        _ => ty2.clone(),
+                    })));
                 } else {
                     panic!("type checking failed")
                 }
@@ -82,7 +92,7 @@ impl Context {
                 let val = val.as_tuple(tuple.len());
                 let ty = ty.as_tuple(tuple.len());
                 for (pattern, (val, ty)) in tuple.into_iter().zip(val.into_iter().zip(ty.into_iter())) {
-                    self.bind(pattern, val, ty);
+                    self.bind(pattern, &val, &ty);
                 }
             },
         }
@@ -107,16 +117,23 @@ impl Program {
             let range = Range::from(&pair.as_span());
             match pair.as_rule() {
                 Rule::stmt_expr => {
-                    let inner = pair.into_inner().next().unwrap();
-                    statements.push(Statement::Expression(range, Expression::parse(inner.into_inner())));
+                    let pair = pair.into_inner().next().unwrap();
+                    statements.push(Statement::Expression(range, Expression::parse(pair.into_inner())));
                 },
                 Rule::stmt_valbind => {
                     let mut inner = pair.into_inner();
                     let pattern = Pattern::parse(inner.next().unwrap());
-                    let expression = Expression::parse(inner.next().unwrap().into_inner());
-                    statements.push(Statement::ValueBind(range, ValueBind { pattern: Box::from(pattern), expression: Box::from(expression) }));
+                    let expr = Expression::parse(inner.next().unwrap().into_inner());
+                    statements.push(Statement::ValueBind(range, ValueBind { pattern: Box::from(pattern), expr: Box::from(expr) }));
                 },
-                _ => {},
+                Rule::stmt_tybind => {
+                    let mut inner = pair.into_inner();
+                    let ident = Identifier { name: inner.next().unwrap().as_str().to_string() };
+                    let expr = TypeExpr::parse(inner.next().unwrap().into_inner());
+                    statements.push(Statement::TypeBind(range, TypeBind { ident, expr: Box::from(expr) }));
+                },
+                Rule::EOI => {},
+                _ => panic!("Unexpected statement rule: {:?}", pair.as_rule()),
             }
         }
         Program { statements }
@@ -142,6 +159,7 @@ impl Program {
 enum Statement {
     Expression(Range, Expression),
     ValueBind(Range, ValueBind),
+    TypeBind(Range, TypeBind),
 }
 
 impl Statement {
@@ -153,9 +171,16 @@ impl Statement {
                 println!("{}: {}", val, ty);
             },
             Statement::ValueBind(_, bind) => {
-                let ty = bind.expression.to_type(ctx);
-                let val = bind.expression.to_value(ctx);
+                let ty = bind.expr.to_type(ctx);
+                let val = bind.expr.to_value(ctx);
                 ctx.borrow_mut().bind(&bind.pattern, &val, &ty);
+                println!("{}: {}", bind.pattern, ty);
+            },
+            Statement::TypeBind(_, bind) => {
+                let ident = bind.ident.clone();
+                let ty = bind.expr.to_type(ctx);
+                ctx.borrow_mut().alias(ident, &ty);
+                println!("{}:: *", ty);
             },
         }
     }
@@ -172,7 +197,11 @@ impl Node for Statement {
             Statement::ValueBind(_, bind) => {
                 println!("ValueBind");
                 bind.pattern.print(f.indent(Some("pattern".to_string())));
-                bind.expression.print(f.indent(Some("expression".to_string())));
+                bind.expr.print(f.indent(Some("expression".to_string())));
+            },
+            Statement::TypeBind(_, bind) => {
+                println!("TypeBind {}", bind.ident.name);
+                bind.expr.print(f.indent(Some("expression".to_string())));
             },
         }
     }
@@ -181,7 +210,13 @@ impl Node for Statement {
 #[derive(Debug, Clone)]
 struct ValueBind {
     pattern: Box<Pattern>,
-    expression: Box<Expression>,
+    expr: Box<Expression>,
+}
+
+#[derive(Debug, Clone)]
+struct TypeBind {
+    ident: Identifier,
+    expr: Box<TypeExpr>,
 }
 
 #[derive(Debug, Clone)]
@@ -195,7 +230,7 @@ impl Pattern {
         let range = Range::from(&pair.as_span());
         match pair.as_rule() {
             Rule::patt_ident => {
-                let pairs = pair.into_inner();
+                let mut pairs = pair.into_inner();
                 let ident = Identifier { name: pairs.next().unwrap().as_str().to_string() };
                 let ty = pairs.next().map(|pair| TypeExpr::parse(pair.into_inner()));
                 Pattern::Identifier(range, ident, ty)
@@ -224,6 +259,24 @@ impl Pattern {
     }
 }
 
+impl Display for Pattern {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Pattern::Identifier(_, ident, _) => write!(f, "{}", ident.name),
+            Pattern::Tuple(_, children) => {
+                write!(f, "(")?;
+                for (i, child) in children.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", child)?;
+                }
+                write!(f, ")")
+            },
+        }
+    }
+}
+
 impl Node for Pattern {
     fn print(&self, f: Formatter) {
         f.header();
@@ -243,6 +296,7 @@ impl Node for Pattern {
 
 #[derive(Debug, Clone)]
 enum Value {
+    Unknown(),
     Number(f64),
     String(String),
     Boolean(bool),
@@ -265,15 +319,22 @@ impl Value {
         }
     }
 
-    fn as_tuple(&self, length: usize) -> &Vec<Value> {
+    fn as_tuple(&self, length: usize) -> Vec<Value> {
         match self {
-            Value::Tuple(children) => {
-                if children.len() != length {
+            Value::Tuple(vec) => {
+                if vec.len() != length {
                     panic!("Expected value")
                 }
-                children
+                vec.clone()
             },
-            _ => panic!("Expected value"),
+            Value::Unknown() => {
+                let mut vec = Vec::new();
+                for _ in 0..length {
+                    vec.push(Value::Unknown());
+                }
+                vec
+            },
+            _ => panic!("Expected tuple"),
         }
     }
 }
@@ -281,6 +342,7 @@ impl Value {
 impl Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Value::Unknown() => write!(f, "<unbound>"),
             Value::Number(number) => write!(f, "{}", number),
             Value::String(string) => write!(f, "{}", string),
             Value::Boolean(bool) => write!(f, "{}", bool),
@@ -399,9 +461,9 @@ impl Expression {
                 let ty = call.argument.to_type(ctx);
                 let val = call.argument.to_value(ctx);
                 let (func, ctx) = callee.as_function();
-                let ctx = ctx.clone();
-                ctx.borrow_mut().bind(&func.pattern, &val, &ty);
-                func.expression.to_value(&ctx)
+                let mut ctx = ctx.borrow_mut().clone();
+                ctx.bind(&func.pattern, &val, &ty);
+                func.expression.to_value(&Rc::from(RefCell::from(ctx)))
             },
             _ => panic!("Unsuppored evaluation: {:?}", self)
         }
@@ -409,6 +471,15 @@ impl Expression {
 
     fn to_type(&self, ctx: &Rc<RefCell<Context>>) -> Type {
         match self {
+            Expression::Unary(_, unary) => {
+                let operand = unary.operand.to_type(ctx);
+                match unary.operator {
+                    UnaryOperator::Neg => {
+                        operand.as_number();
+                        Type::Number()
+                    },
+                }
+            },
             Expression::Binary(_, binary) => {
                 let left = binary.left.to_type(ctx);
                 let right = binary.right.to_type(ctx);
@@ -433,8 +504,20 @@ impl Expression {
                 Type::Tuple(exprs.iter().map(|expr| expr.to_type(ctx)).collect())
             },
             Expression::Function(_, func) => {
-                let innerctx = ctx.clone();
-                Type::Arrow(Box::from(func.pattern.to_type(ctx)), Box::from(func.expression.to_type(&innerctx)))
+                let ty = func.pattern.to_type(ctx);
+                let mut ctx = ctx.borrow_mut().clone();
+                ctx.bind(&func.pattern, &Value::Unknown(), &Type::Bottom());
+                Type::Arrow(Box::from(ty), Box::from(func.expression.to_type(&Rc::from(RefCell::from(ctx)))))
+            },
+            Expression::Call(_, call) => {
+                let ty1 = call.callee.to_type(ctx);
+                let ty2 = call.argument.to_type(ctx);
+                let (ty11, ty12) = ty1.as_function();
+                if Type::subtype(&ty2, ty11) {
+                    ty12.clone()
+                } else {
+                    panic!("subtype check failed")
+                }
             },
             _ => panic!("Unsuppored type: {:?}", self)
         }
@@ -582,6 +665,8 @@ struct Function {
 #[derive(Debug, Clone)]
 enum Type {
     Unknown(),
+    Top(),
+    Bottom(),
     Number(),
     String(),
     Boolean(),
@@ -593,25 +678,41 @@ impl Type {
     fn as_number(&self) {
         match self {
             Type::Number() => {},
-            _ => panic!("Expected number"),
+            _ => panic!("Expected number, received {}", self),
         }
     }
 
-    fn as_tuple(&self, length: usize) -> &Vec<Type> {
+    fn as_function(&self) -> (&Type, &Type) {
         match self {
-            Type::Tuple(children) => {
-                if children.len() != length {
-                    panic!("Expected value")
+            Type::Arrow(ty1, ty2) => (ty1, ty2),
+            _ => panic!("Expected function, received {}", self),
+        }
+    }
+
+    fn as_tuple(&self, length: usize) -> Vec<Type> {
+        match self {
+            Type::Tuple(vec) => {
+                if vec.len() != length {
+                    panic!("Expected tuple with length {}, received {}", length, self)
                 }
-                children
+                vec.clone()
             },
-            _ => panic!("Expected value"),
+            Type::Bottom() => {
+                let mut vec = Vec::new();
+                for _ in 0..length {
+                    vec.push(Type::Bottom());
+                }
+                vec
+            },
+            _ => panic!("Expected tuple, received {}", self),
         }
     }
 
     fn subtype(ty1: &Type, ty2: &Type) -> bool {
         match (ty1, ty2) {
             (_, Type::Unknown()) => true,
+            (_, Type::Top()) => true,
+            (Type::Bottom(), _) => true,
             (Type::Number(), Type::Number()) => true,
             (Type::String(), Type::String()) => true,
             (Type::Boolean(), Type::Boolean()) => true,
@@ -634,6 +735,8 @@ impl Display for Type {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Type::Unknown() => write!(f, "unknown"),
+            Type::Top() => write!(f, "top"),
+            Type::Bottom() => write!(f, "bottom"),
             Type::Number() => write!(f, "number"),
             Type::String() => write!(f, "string"),
             Type::Boolean() => write!(f, "boolean"),
@@ -655,9 +758,6 @@ impl Display for Type {
 #[derive(Debug, Clone)]
 enum TypeExpr {
     Binary(Range, TypeBinary),
-    Number(Range),
-    String(Range),
-    Boolean(Range),
     Identifier(Range, Identifier),
     Tuple(Range, Vec<TypeExpr>),
 }
@@ -680,7 +780,7 @@ impl TypeExpr {
                             TypeExpr::Tuple(range, vec)
                         }
                     },
-                    _ => panic!("Unexpected rule: {:?}", primary.as_rule()),
+                    _ => panic!("Unexpected type rule: {:?}", primary.as_rule()),
                 }
             })
             .map_infix(|lhs, op, rhs| {
@@ -721,9 +821,6 @@ impl Node for TypeExpr {
                 binary.left.print(f.indent(Some("left".to_string())));
                 binary.right.print(f.indent(Some("right".to_string())));
             },
-            TypeExpr::Number(_) => println!("Number"),
-            TypeExpr::String(_) => println!("String"),
-            TypeExpr::Boolean(_) => println!("Boolean"),
             TypeExpr::Identifier(_, identifier) => {
                 println!("Identifier ({})", identifier.name);
             },

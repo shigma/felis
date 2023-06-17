@@ -14,27 +14,27 @@ ident = @{ (alpha | "_") ~ (alpha | digit | "_")* }
 
 main = _{ SOI ~ stmt* ~ EOI }
 
-stmt = _{ stmt_valbind | stmt_expr /* | typebind */ }
+stmt = _{ stmt_valbind | stmt_tybind | stmt_expr }
 
-stmt_expr = { expr ~ ";" }
+stmt_expr = { val_expr ~ ";" }
 
-stmt_valbind = { "let" ~ patt ~ "=" ~ expr ~ ";" }
+stmt_valbind = { "let" ~ patt ~ "=" ~ val_expr ~ ";" }
+
+stmt_tybind = { "type" ~ ident ~ "=" ~ type_expr ~ ";" }
 
 patt = _{ patt_ident | patt_tuple }
 
-patt_ident = { ident ~ type_anno }
+patt_ident = { ident ~ (":" ~ type_expr)? }
 
 patt_tuple = { "(" ~ patt ~ ("," ~ patt)* ~ ")" }
 
-type_anno = { (":" ~ type)? }
-
 val_atom = _{ prefix* ~ (number | string | boolean | func | ident | val_tuple) ~ suffix* }
 
-val_tuple = { "(" ~ expr ~ ("," ~ expr)* ~ ")" }
+val_tuple = { "(" ~ val_expr ~ ("," ~ val_expr)* ~ ")" }
 
-expr = { val_atom ~ (val_infix ~ val_atom)* }
+val_expr = { val_atom ~ (val_infix ~ val_atom)* }
 
-func = { "fn" ~ patt_tuple ~ "->" ~ expr }
+func = { "fn" ~ patt_tuple ~ "->" ~ val_expr }
 
 prefix = _{ neg }
   neg = { "-" }
@@ -49,11 +49,11 @@ val_infix = _{ add | sub | pow | mul | div }
   mul = { "*" }
   div = { "/" }
 
-type = { type_atom ~ (type_infix ~ type_atom)* }
+type_expr = { type_atom ~ (type_infix ~ type_atom)* }
 
 type_infix = _{ arrow }
   arrow = { "->" }
 
-type_atom = { ident | type_tuple }
+type_atom = _{ ident | type_tuple }
 
-type_tuple = { "(" ~ type ~ ("," ~ type)* ~ ")" }
+type_tuple = { "(" ~ type_expr ~ ("," ~ type_expr)* ~ ")" }
