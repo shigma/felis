@@ -72,35 +72,20 @@ pub trait Execution {
 impl Execution for Program {
     fn execute(&self, ctx: &Rc<RefCell<Context>>) -> Value {
         for statement in &self.statements {
-            statement.execute(ctx);
-        }
-        Value::Void()
-    }
-}
-
-impl Execution for Statement {
-    fn execute(&self, ctx: &Rc<RefCell<Context>>) -> Value {
-        match self {
-            Self::Empty() => {},
-            Self::Expression(_, expr) => {
-                let ty = expr.to_type(ctx);
-                let val = expr.to_value(ctx);
-                println!("{}: {}", val, ty);
-                return val;
-            },
-            Self::ValueBind(_, bind) => {
-                let ty = bind.expr.to_type(ctx);
-                let val = bind.expr.to_value(ctx);
-                ctx.borrow_mut().bind_valty(&bind.pattern, &ty);
-                ctx.borrow_mut().bind_value(&bind.pattern, &val);
-                println!("{}: {}", bind.pattern, ty);
-            },
-            Self::TypeBind(_, bind) => {
-                let ident = bind.ident.clone();
-                let ty = bind.expr.to_type(ctx);
-                ctx.borrow_mut().bind_type(ident, &ty);
-                println!("{}:: *", ty);
-            },
+            let ty = statement.to_type(ctx);
+            let val = statement.to_value(ctx);
+            match statement {
+                Statement::Empty() => {},
+                Statement::Expression(_, _) => {
+                    println!("{}: {}", val, ty);
+                },
+                Statement::ValueBind(_, bind) => {
+                    println!("{}: {}", bind.pattern, ty);
+                },
+                Statement::TypeBind(_, bind) => {
+                    println!("{} :: *", bind.ident.name.clone());
+                },
+            }
         }
         Value::Void()
     }

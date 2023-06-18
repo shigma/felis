@@ -188,7 +188,39 @@ impl Typing for Expression {
                     panic!("subtype check failed")
                 }
             },
+            Self::Block(_, vec, open) => {
+                let ctx = ctx.borrow_mut().clone();
+                let rc = &Rc::from(RefCell::from(ctx));
+                let mut ty = Type::Bottom();
+                for stmt in vec.iter() {
+                    ty = stmt.to_type(rc);
+                }
+                if *open { ty } else { Type::Bottom() }
+            },
+            #[allow(unreachable_patterns)]
             _ => panic!("Unsuppored type: {:?}", self)
         }
+    }
+}
+
+impl Typing for Statement {
+    fn to_type(&self, ctx: &Rc<RefCell<Context>>) -> Type {
+        match self {
+            Self::Empty() => {},
+            Self::Expression(_, expr) => {
+                return expr.to_type(ctx);
+            },
+            Self::ValueBind(_, bind) => {
+                let ty = bind.expr.to_type(ctx);
+                ctx.borrow_mut().bind_valty(&bind.pattern, &ty);
+                return ty;
+            },
+            Self::TypeBind(_, bind) => {
+                let ident = bind.ident.clone();
+                let ty = bind.expr.to_type(ctx);
+                ctx.borrow_mut().bind_type(ident, &ty);
+            },
+        }
+        Type::Bottom()
     }
 }

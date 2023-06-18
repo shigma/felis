@@ -1,6 +1,6 @@
 use std::{fmt::Display, rc::Rc, cell::RefCell};
 
-use crate::context::{Context, Execution};
+use crate::context::Context;
 use crate::syntax::*;
 
 #[derive(Debug, Clone)]
@@ -89,9 +89,9 @@ impl Evaluation for Expression {
                 }
             },
             Self::Unary(_, unary) => {
-                let operand = unary.operand.to_value(ctx).as_number();
+                let operand = unary.operand.to_value(ctx);
                 match unary.operator {
-                    UnaryOperator::Neg => Value::Number(-operand),
+                    UnaryOperator::Neg => Value::Number(-operand.as_number()),
                 }
             },
             Self::Number(_, number) => Value::Number(number.parse().unwrap()),
@@ -122,12 +122,30 @@ impl Evaluation for Expression {
                 let rc = &Rc::from(RefCell::from(ctx));
                 let mut val = Value::Void();
                 for stmt in vec.iter() {
-                    val = stmt.execute(rc);
+                    val = stmt.to_value(rc);
                 }
                 if *open { val } else { Value::Void() }
             },
             #[allow(unreachable_patterns)]
             _ => panic!("Unsuppored evaluation: {:?}", self)
         }
+    }
+}
+
+impl Evaluation for Statement {
+    fn to_value(&self, ctx: &Rc<RefCell<Context>>) -> Value {
+        match self {
+            Self::Empty() => {},
+            Self::Expression(_, expr) => {
+                return expr.to_value(ctx)
+            },
+            Self::ValueBind(_, bind) => {
+                let val = bind.expr.to_value(ctx);
+                ctx.borrow_mut().bind_value(&bind.pattern, &val);
+                return val
+            },
+            Self::TypeBind(_, _) => {},
+        }
+        Value::Void()
     }
 }
