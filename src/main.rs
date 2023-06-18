@@ -78,12 +78,11 @@ impl Context {
     fn bind(&mut self, pattern: &Pattern, val: &Value, ty: &Type) {
         match pattern {
             Pattern::Identifier(_, ident, _) => {
-                let ty2 = &pattern.to_type(&Rc::new(RefCell::new(self.clone())));
-                if Type::subtype(ty, ty2) {
-                    self.values.insert(ident.name.clone(), Box::from((val.clone(), match ty2 {
-                        Type::Unknown() => ty.clone(),
-                        _ => ty2.clone(),
-                    })));
+                let ty2: &Type = &pattern.to_type(&Rc::new(RefCell::new(self.clone())));
+                if let Type::Unknown() = ty2 {
+                    self.values.insert(ident.name.clone(), Box::from((val.clone(), ty.clone())));
+                } else if Type::subtype(ty, ty2) {
+                    self.values.insert(ident.name.clone(), Box::from((val.clone(), ty2.clone())));
                 } else {
                     panic!("type checking failed")
                 }
@@ -110,32 +109,11 @@ struct Program {
 
 impl Program {
     fn parse(input: &String) -> Program {
-        let pairs = Grammar::parse(Rule::main, input.as_str())
-            .unwrap_or_else(|e| panic!("{}", e));
-        let mut statements = Vec::new();
-        for pair in pairs {
-            let range = Range::from(&pair.as_span());
-            match pair.as_rule() {
-                Rule::stmt_expr => {
-                    let pair = pair.into_inner().next().unwrap();
-                    statements.push(Statement::Expression(range, Expression::parse(pair.into_inner())));
-                },
-                Rule::stmt_valbind => {
-                    let mut inner = pair.into_inner();
-                    let pattern = Pattern::parse(inner.next().unwrap());
-                    let expr = Expression::parse(inner.next().unwrap().into_inner());
-                    statements.push(Statement::ValueBind(range, ValueBind { pattern: Box::from(pattern), expr: Box::from(expr) }));
-                },
-                Rule::stmt_tybind => {
-                    let mut inner = pair.into_inner();
-                    let ident = Identifier { name: inner.next().unwrap().as_str().to_string() };
-                    let expr = TypeExpr::parse(inner.next().unwrap().into_inner());
-                    statements.push(Statement::TypeBind(range, TypeBind { ident, expr: Box::from(expr) }));
-                },
-                Rule::EOI => {},
-                _ => panic!("Unexpected statement rule: {:?}", pair.as_rule()),
-            }
-        }
+        let pairs = Grammar
+            ::parse(Rule::main, input.as_str())
+            .unwrap_or_else(|e| panic!("{}", e))
+            .next().unwrap().into_inner();
+        let statements = pairs.map(|pair| Statement::from(pair)).collect();
         Program { statements }
     }
 
@@ -160,29 +138,56 @@ enum Statement {
     Expression(Range, Expression),
     ValueBind(Range, ValueBind),
     TypeBind(Range, TypeBind),
+    Empty(),
 }
 
 impl Statement {
-    fn execute(&self, ctx: &Rc<RefCell<Context>>) {
+    fn from(pair: Pair<'_, Rule>) -> Statement {
+        let range = Range::from(&pair.as_span());
+        match pair.as_rule() {
+            Rule::val_expr => {
+                Statement::Expression(range, Expression::parse(pair.into_inner()))
+            },
+            Rule::stmt_valbind => {
+                let mut inner = pair.into_inner();
+                let pattern = Pattern::parse(inner.next().unwrap());
+                let expr = Expression::parse(inner.next().unwrap().into_inner());
+                Statement::ValueBind(range, ValueBind { pattern: Box::from(pattern), expr: Box::from(expr) })
+            },
+            Rule::stmt_tybind => {
+                let mut inner = pair.into_inner();
+                let ident = Identifier { name: inner.next().unwrap().as_str().to_string() };
+                let expr = TypeExpr::parse(inner.next().unwrap().into_inner());
+                Statement::TypeBind(range, TypeBind { ident, expr: Box::from(expr) })
+            },
+            Rule::EOI => Statement::Empty(),
+            _ => panic!("Unexpected statement rule: {:?}", pair.as_rule()),
+        }
+    }
+
+    fn execute(&self, ctx: &Rc<RefCell<Context>>) -> Value {
         match self {
-            Statement::Expression(_, expr) => {
+            Self::Empty() => {},
+            Self::Expression(_, expr) => {
                 let ty = expr.to_type(ctx);
                 let val = expr.to_value(ctx);
                 println!("{}: {}", val, ty);
+                return val;
             },
-            Statement::ValueBind(_, bind) => {
+            Self::ValueBind(_, bind) => {
                 let ty = bind.expr.to_type(ctx);
                 let val = bind.expr.to_value(ctx);
                 ctx.borrow_mut().bind(&bind.pattern, &val, &ty);
                 println!("{}: {}", bind.pattern, ty);
             },
-            Statement::TypeBind(_, bind) => {
+            Self::TypeBind(_, bind) => {
                 let ident = bind.ident.clone();
                 let ty = bind.expr.to_type(ctx);
                 ctx.borrow_mut().alias(ident, &ty);
                 println!("{}:: *", ty);
             },
         }
+        Value::Void()
     }
 }
 
@@ -190,6 +195,7 @@ impl Node for Statement {
     fn print(&self, f: Formatter) {
         f.header();
         match self {
+            Statement::Empty() => {},
             Statement::Expression(_, expr) => {
                 println!("ExpressionStatement");
                 expr.print(f.indent(None));
@@ -243,7 +249,7 @@ impl Pattern {
                     Pattern::Tuple(range, vec)
                 }
             },
-            _ => panic!("Unexpected rule: {:?}", pair.as_rule()),
+            _ => panic!("Unexpected pattern: {:?}", pair.as_rule()),
         }
     }
 
@@ -296,7 +302,7 @@ impl Node for Pattern {
 
 #[derive(Debug, Clone)]
 enum Value {
-    Unknown(),
+    Void(),
     Number(f64),
     String(String),
     Boolean(bool),
@@ -327,10 +333,10 @@ impl Value {
                 }
                 vec.clone()
             },
-            Value::Unknown() => {
+            Value::Void() => {
                 let mut vec = Vec::new();
                 for _ in 0..length {
-                    vec.push(Value::Unknown());
+                    vec.push(Value::Void());
                 }
                 vec
             },
@@ -342,7 +348,7 @@ impl Value {
 impl Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Value::Unknown() => write!(f, "<unbound>"),
+            Value::Void() => write!(f, "<void>"),
             Value::Number(number) => write!(f, "{}", number),
             Value::String(string) => write!(f, "{}", string),
             Value::Boolean(bool) => write!(f, "{}", bool),
@@ -372,6 +378,7 @@ enum Expression {
     Boolean(Range, bool),
     Identifier(Range, Identifier),
     Tuple(Range, Vec<Expression>),
+    Block(Range, Vec<Statement>, bool),
 }
 
 impl Expression {
@@ -384,12 +391,23 @@ impl Expression {
             .op(Op::postfix(Rule::call))
             .map_primary(|primary| {
                 let range = Range::from(&primary.as_span());
+                println!("{:?}", primary.as_rule());
                 match primary.as_rule() {
                     Rule::number => Expression::Number(range, primary.as_str().to_string()),
                     Rule::string => Expression::String(range, primary.as_str().to_string()),
                     Rule::tru => Expression::Boolean(range, true),
                     Rule::fls => Expression::Boolean(range, false),
                     Rule::ident => Expression::Identifier(range, Identifier { name: primary.as_str().to_string() }),
+                    Rule::block => {
+                        let mut inner = primary.into_inner();
+                        let mut vec: Vec<Statement> = inner.next().unwrap().into_inner().map(|pair| Statement::from(pair)).collect();
+                        if let Some(pair) = inner.next() {
+                            vec.push(Statement::from(pair));
+                            Expression::Block(range, vec, true)
+                        } else {
+                            Expression::Block(range, vec, false)
+                        }
+                    },
                     Rule::val_tuple => {
                         let mut vec: Vec<Expression> = primary.into_inner().map(|pair| Expression::parse(pair.into_inner())).collect();
                         if vec.len() == 1 {
@@ -402,9 +420,9 @@ impl Expression {
                         let mut inner = primary.into_inner();
                         let pattern = Pattern::parse(inner.next().unwrap());
                         let expression = Expression::parse(inner.next().unwrap().into_inner());
-                        Expression::Function(range, Function { pattern: Box::new(pattern), expression: Box::new(expression) })
+                        Expression::Function(range, Function { pattern: Box::new(pattern), expr: Box::new(expression) })
                     },
-                    _ => panic!("Unexpected rule: {:?}", primary.as_rule()),
+                    _ => panic!("Unexpected expression: {:?}", primary.as_rule()),
                 }
             })
             .map_infix(|lhs, op, rhs| {
@@ -463,7 +481,16 @@ impl Expression {
                 let (func, ctx) = callee.as_function();
                 let mut ctx = ctx.borrow_mut().clone();
                 ctx.bind(&func.pattern, &val, &ty);
-                func.expression.to_value(&Rc::from(RefCell::from(ctx)))
+                func.expr.to_value(&Rc::from(RefCell::from(ctx)))
+            },
+            Expression::Block(_, vec, open) => {
+                let ctx = ctx.borrow_mut().clone();
+                let rc = &Rc::from(RefCell::from(ctx));
+                let mut val = Value::Void();
+                for stmt in vec.iter() {
+                    val = stmt.execute(rc);
+                }
+                if *open { val } else { Value::Void() }
             },
             _ => panic!("Unsuppored evaluation: {:?}", self)
         }
@@ -506,8 +533,8 @@ impl Expression {
             Expression::Function(_, func) => {
                 let ty = func.pattern.to_type(ctx);
                 let mut ctx = ctx.borrow_mut().clone();
-                ctx.bind(&func.pattern, &Value::Unknown(), &Type::Bottom());
-                Type::Arrow(Box::from(ty), Box::from(func.expression.to_type(&Rc::from(RefCell::from(ctx)))))
+                ctx.bind(&func.pattern, &Value::Void(), &Type::Bottom());
+                Type::Arrow(Box::from(ty), Box::from(func.expr.to_type(&Rc::from(RefCell::from(ctx)))))
             },
             Expression::Call(_, call) => {
                 let ty1 = call.callee.to_type(ctx);
@@ -552,7 +579,7 @@ impl Node for Expression {
             Expression::Function(_, function) => {
                 println!("Function");
                 function.pattern.print(f.indent(Some("pattern".to_string())));
-                function.expression.print(f.indent(Some("expression".to_string())));
+                function.expr.print(f.indent(Some("expression".to_string())));
             },
             Expression::Call(_, call) => {
                 println!("FunctionCall");
@@ -561,8 +588,14 @@ impl Node for Expression {
             },
             Expression::Tuple(_, exprs) => {
                 println!("Tuple");
-                for (i, expr) in exprs.iter().enumerate() {
-                    expr.print(f.indent(Some(format!("{}", i))));
+                for expr in exprs.iter() {
+                    expr.print(f.indent(None));
+                }
+            },
+            Expression::Block(_, stmts, _) => {
+                println!("Block");
+                for stmt in stmts.iter() {
+                    stmt.print(f.indent(None));
                 }
             },
         }
@@ -593,7 +626,7 @@ impl Unary {
         Unary {
             operator: match prefix.as_rule() {
                 Rule::neg => UnaryOperator::Neg,
-                _ => panic!("Unexpected rule: {:?}", prefix.as_rule()),
+                _ => panic!("Unexpected unary operator: {:?}", prefix.as_rule()),
             },
             operand: Box::new(operand),
         }
@@ -637,7 +670,7 @@ impl Binary {
                 Rule::mul => BinaryOperator::Mul,
                 Rule::div => BinaryOperator::Div,
                 Rule::pow => BinaryOperator::Pow,
-                _ => panic!("Unexpected rule: {:?}", infix.as_rule()),
+                _ => panic!("Unexpected binary operator: {:?}", infix.as_rule()),
             },
             left: Box::new(left),
             right: Box::new(right),
@@ -659,7 +692,7 @@ struct Identifier {
 #[derive(Debug, Clone)]
 struct Function {
     pattern: Box<Pattern>,
-    expression: Box<Expression>,
+    expr: Box<Expression>,
 }
 
 #[derive(Debug, Clone)]
@@ -859,7 +892,7 @@ impl TypeBinary {
         TypeBinary {
             operator: match infix.as_rule() {
                 Rule::arrow => TypeBinaryOperator::Arrow,
-                _ => panic!("Unexpected rule: {:?}", infix.as_rule()),
+                _ => panic!("Unexpected type binary operator: {:?}", infix.as_rule()),
             },
             left: Box::new(left),
             right: Box::new(right),

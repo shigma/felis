@@ -12,15 +12,15 @@ boolean = _{ tru | fls }
 
 ident = @{ (alpha | "_") ~ (alpha | digit | "_")* }
 
-main = _{ SOI ~ stmt* ~ EOI }
+main = _{ SOI ~ stmt_list ~ EOI }
 
-stmt = _{ stmt_valbind | stmt_tybind | stmt_expr }
+stmt = _{ stmt_valbind | stmt_tybind | val_expr }
 
-stmt_expr = { val_expr ~ ";" }
+stmt_list = { (stmt? ~ ";")* }
 
-stmt_valbind = { "let" ~ patt ~ "=" ~ val_expr ~ ";" }
+stmt_valbind = { "let" ~ patt ~ "=" ~ val_expr }
 
-stmt_tybind = { "type" ~ ident ~ "=" ~ type_expr ~ ";" }
+stmt_tybind = { "type" ~ ident ~ "=" ~ type_expr }
 
 patt = _{ patt_ident | patt_tuple }
 
@@ -28,11 +28,17 @@ patt_ident = { ident ~ (":" ~ type_expr)? }
 
 patt_tuple = { "(" ~ patt ~ ("," ~ patt)* ~ ")" }
 
-val_atom = _{ prefix* ~ (number | string | boolean | func | ident | val_tuple) ~ suffix* }
+val_atom = _{ prefix* ~ (number | string | boolean | val_tuple | block | if | while | func | ident) ~ suffix* }
 
 val_tuple = { "(" ~ val_expr ~ ("," ~ val_expr)* ~ ")" }
 
 val_expr = { val_atom ~ (val_infix ~ val_atom)* }
+
+block = { "{" ~ stmt_list ~ stmt? ~ "}" }
+
+if = { "if" ~ val_expr ~ block ~ ("else" ~ block)? }
+
+while = { "while" ~ val_expr ~ block }
 
 func = { "fn" ~ patt_tuple ~ "->" ~ val_expr }
 
