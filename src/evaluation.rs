@@ -39,7 +39,7 @@ impl Value {
         match self {
             Self::Tuple(vec) => {
                 if vec.len() != length {
-                    panic!("Expected value")
+                    panic!("Expected tuple with length {}", length)
                 }
                 vec.clone()
             },
@@ -93,6 +93,14 @@ impl Evaluation for Expression {
                     BinaryOperator::Mul => Value::Number(left.as_number() * right.as_number()),
                     BinaryOperator::Div => Value::Number(left.as_number() / right.as_number()),
                     BinaryOperator::Pow => Value::Number(left.as_number().powf(right.as_number())),
+                    BinaryOperator::Gt => Value::Boolean(left.as_number() > right.as_number()),
+                    BinaryOperator::Lt => Value::Boolean(left.as_number() < right.as_number()),
+                    BinaryOperator::Ge => Value::Boolean(left.as_number() >= right.as_number()),
+                    BinaryOperator::Le => Value::Boolean(left.as_number() <= right.as_number()),
+                    BinaryOperator::Eq => Value::Boolean(left.as_number() == right.as_number()),
+                    BinaryOperator::Ne => Value::Boolean(left.as_number() != right.as_number()),
+                    BinaryOperator::And => Value::Boolean(left.as_boolean() && right.as_boolean()),
+                    BinaryOperator::Or => Value::Boolean(left.as_boolean() || right.as_boolean()),
                 }
             },
             Self::Unary(_, unary) => {

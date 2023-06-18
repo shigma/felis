@@ -48,12 +48,20 @@ prefix = _{ neg }
 suffix = _{ call }
   call = { val_tuple }
 
-val_infix = _{ add | sub | pow | mul | div }
+val_infix = _{ add | sub | pow | mul | div | gt | lt | ge | le | eq | ne | and | or }
   add = { "+" }
   sub = { "-" }
   pow = { "**" }
   mul = { "*" }
   div = { "/" }
+  gt = { ">" }
+  lt = { "<" }
+  ge = { ">=" }
+  le = { "<=" }
+  eq = { "==" }
+  ne = { "!=" }
+  and = { "&&" }
+  or = { "||" }
 
 type_expr = { type_atom ~ (type_infix ~ type_atom)* }
 

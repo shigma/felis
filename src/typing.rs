@@ -201,6 +201,16 @@ impl Typing for Expression {
                         right.as_number();
                         Type::Number()
                     },
+                    BinaryOperator::Gt | BinaryOperator::Lt | BinaryOperator::Ge | BinaryOperator::Le | BinaryOperator::Eq | BinaryOperator::Ne => {
+                        left.as_number();
+                        right.as_number();
+                        Type::Boolean()
+                    },
+                    BinaryOperator::And | BinaryOperator::Or => {
+                        left.as_boolean();
+                        right.as_boolean();
+                        Type::Boolean()
+                    },
                 }
             },
             Self::Number(_, _) => Type::Number(),

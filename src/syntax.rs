@@ -234,8 +234,18 @@ impl Expression {
 
     fn parse(pairs: Pairs<'_, Rule>) -> Expression {
         PrattParser::new()
-            .op(Op::infix(Rule::add, Assoc::Left) | Op::infix(Rule::sub, Assoc::Left))
-            .op(Op::infix(Rule::mul, Assoc::Left) | Op::infix(Rule::div, Assoc::Left))
+            .op(Op::infix(Rule::and, Assoc::Left) |
+                Op::infix(Rule::or, Assoc::Left))
+            .op(Op::infix(Rule::gt, Assoc::Left) |
+                Op::infix(Rule::lt, Assoc::Left) |
+                Op::infix(Rule::ge, Assoc::Left) |
+                Op::infix(Rule::le, Assoc::Left) |
+                Op::infix(Rule::eq, Assoc::Left) |
+                Op::infix(Rule::ne, Assoc::Left))
+            .op(Op::infix(Rule::add, Assoc::Left) |
+                Op::infix(Rule::sub, Assoc::Left))
+            .op(Op::infix(Rule::mul, Assoc::Left) |
+                Op::infix(Rule::div, Assoc::Left))
             .op(Op::infix(Rule::pow, Assoc::Right))
             .op(Op::prefix(Rule::neg))
             .op(Op::postfix(Rule::call))
@@ -385,6 +395,14 @@ pub enum BinaryOperator {
     Mul,
     Div,
     Pow,
+    Gt,
+    Lt,
+    Ge,
+    Le,
+    Eq,
+    Ne,
+    And,
+    Or,
 }
 
 impl Display for BinaryOperator {
@@ -395,6 +413,14 @@ impl Display for BinaryOperator {
             Self::Mul => write!(f, "*"),
             Self::Div => write!(f, "/"),
             Self::Pow => write!(f, "**"),
+            Self::Gt => write!(f, ">"),
+            Self::Lt => write!(f, "<"),
+            Self::Ge => write!(f, ">="),
+            Self::Le => write!(f, "<="),
+            Self::Eq => write!(f, "=="),
+            Self::Ne => write!(f, "!="),
+            Self::And => write!(f, "&&"),
+            Self::Or => write!(f, "||"),
         }
     }
 }
@@ -415,6 +441,14 @@ impl Binary {
                 Rule::mul => BinaryOperator::Mul,
                 Rule::div => BinaryOperator::Div,
                 Rule::pow => BinaryOperator::Pow,
+                Rule::gt => BinaryOperator::Gt,
+                Rule::lt => BinaryOperator::Lt,
+                Rule::ge => BinaryOperator::Ge,
+                Rule::le => BinaryOperator::Le,
+                Rule::eq => BinaryOperator::Eq,
+                Rule::ne => BinaryOperator::Ne,
+                Rule::and => BinaryOperator::And,
+                Rule::or => BinaryOperator::Or,
                 _ => panic!("Unexpected binary operator: {:?}", infix.as_rule()),
             },
             left: Box::new(left),
