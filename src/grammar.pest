@@ -28,7 +28,7 @@ patt_ident = { ident ~ (":" ~ type_expr)? }
 
 patt_tuple = { "(" ~ patt ~ ("," ~ patt)* ~ ")" }
 
-val_atom = _{ prefix* ~ (number | string | boolean | val_tuple | block | if | while | func | ident) ~ suffix* }
+val_atom = _{ prefix* ~ (number | string | boolean | val_tuple | block | if_ | while | func | ident) ~ suffix* }
 
 val_tuple = { "(" ~ val_expr ~ ("," ~ val_expr)* ~ ")" }
 
@@ -36,7 +36,7 @@ val_expr = { val_atom ~ (val_infix ~ val_atom)* }
 
 block = { "{" ~ stmt_list ~ stmt? ~ "}" }
 
-if = { "if" ~ val_expr ~ block ~ ("else" ~ block)? }
+if_ = { "if" ~ val_expr ~ block ~ ("else" ~ block)? }
 
 while = { "while" ~ val_expr ~ block }
 

@@ -21,6 +21,13 @@ impl Value {
         }
     }
 
+    pub fn as_boolean(&self) -> bool {
+        match self {
+            Self::Boolean(boolean) => *boolean,
+            _ => panic!("Expected boolean"),
+        }
+    }
+
     pub fn as_function(&self) -> (&Function, &Rc<RefCell<Context>>) {
         match self {
             Self::Function(function, ctx) => (function, ctx),
@@ -125,6 +132,16 @@ impl Evaluation for Expression {
                     val = stmt.to_value(rc);
                 }
                 if *open { val } else { Value::Void() }
+            },
+            Self::If(_, cond, then, else_) => {
+                let cond = cond.to_value(ctx);
+                if cond.as_boolean() {
+                    then.to_value(ctx)
+                } else if let Some(else_) = &else_ {
+                    else_.to_value(ctx)
+                } else {
+                    Value::Void()
+                }
             },
             #[allow(unreachable_patterns)]
             _ => panic!("Unsuppored evaluation: {:?}", self)

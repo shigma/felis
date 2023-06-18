@@ -23,6 +23,13 @@ impl Type {
         }
     }
 
+    pub fn as_boolean(&self) {
+        match self {
+            Self::Boolean() => {},
+            _ => panic!("Expected boolean, received {}", self),
+        }
+    }
+
     pub fn as_function(&self) -> (&Type, &Type) {
         match self {
             Self::Arrow(ty1, ty2) => (ty1, ty2),
@@ -67,6 +74,42 @@ impl Type {
                 Self::subtype(&ty21, &ty11) && Self::subtype(&ty12, &ty22)
             },
             _ => false,
+        }
+    }
+
+    pub fn join(ty1: &Type, ty2: &Type) -> Type {
+        if Type::subtype(ty1, ty2) { return ty2.clone() }
+        if Type::subtype(ty2, ty1) { return ty1.clone() }
+        match (ty1, ty2) {
+            (Self::Tuple(vec1), Self::Tuple(vec2)) => {
+                if vec1.len() != vec2.len() {
+                    Type::Top()
+                } else {
+                    Type::Tuple(vec1.iter().zip(vec2.iter()).map(|(ty1, ty2)| Type::join(ty1, ty2)).collect())
+                }
+            },
+            (Self::Arrow(ty11, ty12), Self::Arrow(ty21, ty22)) => {
+                Type::Arrow(Box::from(Type::meet(ty11, ty21)), Box::from(Type::join(ty12, ty22)))
+            },
+            _ => Type::Top()
+        }
+    }
+
+    pub fn meet(ty1: &Type, ty2: &Type) -> Type {
+        if Type::subtype(ty1, ty2) { return ty1.clone() }
+        if Type::subtype(ty2, ty1) { return ty2.clone() }
+        match (ty1, ty2) {
+            (Self::Tuple(vec1), Self::Tuple(vec2)) => {
+                if vec1.len() != vec2.len() {
+                    Type::Bottom()
+                } else {
+                    Type::Tuple(vec1.iter().zip(vec2.iter()).map(|(ty1, ty2)| Type::meet(ty1, ty2)).collect())
+                }
+            },
+            (Self::Arrow(ty11, ty12), Self::Arrow(ty21, ty22)) => {
+                Type::Arrow(Box::from(Type::join(ty11, ty21)), Box::from(Type::meet(ty12, ty22)))
+            },
+            _ => Type::Bottom()
         }
     }
 }
@@ -196,6 +239,14 @@ impl Typing for Expression {
                     ty = stmt.to_type(rc);
                 }
                 if *open { ty } else { Type::Bottom() }
+            },
+            Self::If(_, cond, then, else_) => {
+                cond.to_type(ctx).as_boolean();
+                if let Some(else_) = &else_ {
+                    Type::join(&then.to_type(ctx), &else_.to_type(ctx))
+                } else {
+                    Type::Bottom()
+                }
             },
             #[allow(unreachable_patterns)]
             _ => panic!("Unsuppored type: {:?}", self)

@@ -216,9 +216,22 @@ pub enum Expression {
     Identifier(Range, Identifier),
     Tuple(Range, Vec<Expression>),
     Block(Range, Vec<Statement>, bool),
+    If(Range, Box<Expression>, Box<Expression>, Option<Box<Expression>>),
 }
 
 impl Expression {
+    fn parse_block(pair: Pair<'_, Rule>) -> Expression {
+        let range = Range::from(&pair.as_span());
+        let mut inner = pair.into_inner();
+        let mut vec: Vec<Statement> = inner.next().unwrap().into_inner().map(|pair| Statement::from(pair)).collect();
+        if let Some(pair) = inner.next() {
+            vec.push(Statement::from(pair));
+            Expression::Block(range, vec, true)
+        } else {
+            Expression::Block(range, vec, false)
+        }
+    }
+
     fn parse(pairs: Pairs<'_, Rule>) -> Expression {
         PrattParser::new()
             .op(Op::infix(Rule::add, Assoc::Left) | Op::infix(Rule::sub, Assoc::Left))
@@ -228,23 +241,13 @@ impl Expression {
             .op(Op::postfix(Rule::call))
             .map_primary(|primary| {
                 let range = Range::from(&primary.as_span());
-                println!("{:?}", primary.as_rule());
                 match primary.as_rule() {
                     Rule::number => Expression::Number(range, primary.as_str().to_string()),
                     Rule::string => Expression::String(range, primary.as_str().to_string()),
                     Rule::tru => Expression::Boolean(range, true),
                     Rule::fls => Expression::Boolean(range, false),
                     Rule::ident => Expression::Identifier(range, Identifier { name: primary.as_str().to_string() }),
-                    Rule::block => {
-                        let mut inner = primary.into_inner();
-                        let mut vec: Vec<Statement> = inner.next().unwrap().into_inner().map(|pair| Statement::from(pair)).collect();
-                        if let Some(pair) = inner.next() {
-                            vec.push(Statement::from(pair));
-                            Expression::Block(range, vec, true)
-                        } else {
-                            Expression::Block(range, vec, false)
-                        }
-                    },
+                    Rule::block => Expression::parse_block(primary),
                     Rule::val_tuple => {
                         let mut vec: Vec<Expression> = primary.into_inner().map(|pair| Expression::parse(pair.into_inner())).collect();
                         if vec.len() == 1 {
@@ -259,6 +262,13 @@ impl Expression {
                         let expression = Expression::parse(inner.next().unwrap().into_inner());
                         Expression::Function(range, Function { pattern: Box::new(pattern), expr: Box::new(expression) })
                     },
+                    Rule::if_ => {
+                        let mut inner = primary.into_inner();
+                        let cond = Expression::parse(inner.next().unwrap().into_inner());
+                        let then = Expression::parse_block(inner.next().unwrap());
+                        let else_ = inner.next().map(|pair| Expression::parse_block(pair));
+                        Expression::If(range, Box::new(cond), Box::new(then), else_.map(Box::new))
+                    }
                     _ => panic!("Unexpected expression: {:?}", primary.as_rule()),
                 }
             })
@@ -323,6 +333,14 @@ impl Node for Expression {
                 println!("Block");
                 for stmt in stmts.iter() {
                     stmt.print(f.indent(None));
+                }
+            },
+            Self::If(_, cond, then, else_) => {
+                println!("If");
+                cond.print(f.indent(Some("condition".to_string())));
+                then.print(f.indent(Some("then".to_string())));
+                if let Some(else_) = else_ {
+                    else_.print(f.indent(Some("else".to_string())));
                 }
             },
         }
